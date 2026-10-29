@@ -1,0 +1,27 @@
+{
+  "name": "fileServer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node app.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs --env production",
+    "pm2:stop": "pm2 stop cloud-control-web",
+    "pm2:restart": "pm2 restart cloud-control-web",
+    "pm2:logs": "pm2 logs cloud-control-web"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.0",
+    "multer": "^2.1.1",
+    "sharp": "^0.34.5",
+    "uuid": "^9.0.0",
+    "ws": "^8.13.0"
+  }
+}

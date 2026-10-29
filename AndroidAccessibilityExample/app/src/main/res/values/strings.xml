@@ -1,0 +1,48 @@
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+    <string name="app_name">安卓群控手机端</string>
+    <string name="accessibilityName">A安卓群控手机端(点击打开无障碍)</string>
+
+    <string name="description">
+        该服务支持坐标点击，但某些机型可能因此出现卡顿掉帧的情况，如果出现上述情况，请关闭此服务，开启另一个不支持坐标点击的服务。\n\n
+        注意：不能同时开启两个服务，否则会因为冲突而产生异常。在开启该服务后，请确保另一个不支持坐标点击的服务已关闭。\n\n
+        提示：打开开关时会收到系统例行风险提示,点击＂确认＂即可，本应用不会收集任何隐私数据。
+    </string>
+    <string name="descriptionNoGesture">
+        该服务不支持坐标点击，所以某些依赖坐标的模拟点击功能会失效。\n\n
+        只有在开启支持坐标点击的服务时会出现卡顿掉帧的情况才需要选择该服务，否则请前往开启另一个服务。\n\n
+        注意：不能同时开启两个服务，否则会因为冲突而产生异常。在开启该服务后，请确保另一个支持坐标点击的服务已关闭。\n\n
+        提示：打开开关时会收到系统例行风险提示，点击＂确认＂即可，本应用不会收集任何隐私数据。
+    </string>
+    <string name="authorizationQuestion">
+        以下权限需自行开启：\n允许读取应用列表\n允许后台运行\n允许自启动\n允许关联启动\n锁定后台\n关闭省电模式
+    </string>
+    <string name="nodeInfo"/>
+    <string name="rect"/>
+    <string name="group_control">开启群控系统</string>
+
+    <!-- Cyber HUD Strings -->
+    <string name="ch_system_status">SYSTEM_STATUS</string>
+    <string name="ch_terminal_control">TERMINAL / CONTROL</string>
+    <string name="ch_network_projection">NETWORK_开始</string>
+    <string name="ch_sync_active">SYNC_DATA_FLOW: 激活</string>
+    <string name="ch_auth_identifier">AUTH_IDENTIFIER_身份标识</string>
+    <string name="ch_id_required">ID_REQUIRED</string>
+    <string name="ch_config_panel">CONFIG_PANEL</string>
+    <string name="ch_permission_core">PERMISSION_CORE_权限设置</string>
+    <string name="ch_access_full">ACCESS_LEVEL: FULL</string>
+    <string name="ch_unit_id">UNIT_ID: ACCESSIBILITY_CORE</string>
+    <string name="ch_build_ver">当前版本: 1.0.2-STABLE</string>
+    <string name="ch_protocol_info">[PROTOCOL_INFO_协议信息]</string>
+    <string name="ch_about_desc">
+        CORE_SERVICE: 已激活\n同步引擎: V3_PRO\nAUTH_GATEWAY: ENCRYPTED\n\nHigh-performance Android automation system. 低延迟屏幕同步 with secure gesture injection.
+    </string>
+    <string name="ch_accessibility_service">ACCESSIBILITY_SERVICE_无障碍服务</string>
+    <string name="ch_device_admin">DEVICE_ADMIN_CORE_设备管理</string>
+    <string name="ch_battery_optimization">BATTERY_OPTIMIZATION_电池优化</string>
+    <string name="ch_notification_keepalive">NOTIFICATION_KEEPALIVE_通知保活</string>
+    <string name="ch_floating_overlay">FLOATING_OVERLAY_UI_悬浮窗保活</string>
+    <string name="ch_system_alert">SYSTEM_ALERT_WINDOW_悬浮窗权限</string>
+    <string name="ch_media_projection">MEDIA_PROJECTION_LINK_投屏连接</string>
+    <string name="ch_exception_reporting">EXCEPTION_REPORTING_异常上报</string>
+    <string name="ch_system_notice">SYSTEM_NOTICE: 请确保核心权限已开启以保证系统稳定性。建议关闭省电模式。</string>
+</resources>

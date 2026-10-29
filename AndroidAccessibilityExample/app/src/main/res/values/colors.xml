@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cyber HUD Theme Colors -->
+    <color name="ch_cyan">#00F0FF</color>
+    <color name="ch_magenta">#FF00AA</color>
+    <color name="ch_bg">#030810</color>
+    <color name="ch_panel">#D8040C1C</color>
+    <color name="ch_border">#5900F0FF</color>
+    <color name="ch_text">#C8E6FF</color>
+    <color name="ch_text_dim">#5A7A9A</color>
+    <color name="ch_danger">#FF3366</color>
+    <color name="ch_success">#00FF88</color>
+    <color name="ch_warning">#FFAA00</color>
+    <color name="ch_cyan_dim">#6600F0FF</color>
+
+    <!-- Standard Material Colors (referenced in styles.xml) -->
+    <color name="colorPrimary">@color/ch_cyan</color>
+    <color name="colorPrimaryDark">@color/ch_bg</color>
+    <color name="colorAccent">@color/ch_magenta</color>
+
+    <!-- Telegram 风格深色背景 (Mapped to Cyber HUD) -->
+    <color name="tg_background">@color/ch_bg</color>
+    <color name="tg_card_bg">@color/ch_panel</color>
+    <color name="tg_accent">@color/ch_cyan</color>
+    <color name="tg_accent_light">#2600F0FF</color>
+
+    <!-- 文本颜色 -->
+    <color name="tg_text_primary">@color/ch_text</color>
+    <color name="tg_text_secondary">@color/ch_text_dim</color>
+
+    <!-- 图标背景色 (参考图中的各异颜色) -->
+    <color name="icon_blue">#37AEE2</color>
+    <color name="icon_orange">#F28C48</color>
+    <color name="icon_green">#62C655</color>
+    <color name="icon_red">#EF595F</color>
+
+    <!-- Legacy colors used in other layouts -->
+    <color name="background">@color/ch_bg</color>
+    <color name="text_color">@color/ch_text</color>
+    <color name="main_color">@color/ch_cyan</color>
+    <color name="state_err">@color/ch_danger</color>
+    <color name="divide_line">@color/ch_border</color>
+    <color name="switch_disable">#8E979E</color>
+    <color name="checkbox_disable">#30000000</color>
+    <color name="transparent">#00000000</color>
+</resources>

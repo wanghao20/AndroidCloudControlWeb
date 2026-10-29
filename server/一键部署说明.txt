@@ -1,0 +1,72 @@
+============================================
+  APK 文件管理后台 - 一键部署说明
+============================================
+
+【环境要求】
+- Linux 服务器（Ubuntu / CentOS）
+- 宝塔面板（可选，方便管理）
+- Node.js >= 18（脚本会自动安装）
+- PM2（脚本会自动安装）
+- 不需要 MySQL / Redis 等数据库
+
+【部署步骤】
+
+1. 将整个项目文件夹上传到服务器：/www/wwwroot/APK
+
+2. 执行一键部署命令：
+   cd /www/wwwroot/APK && bash install.sh
+
+3. 按提示设置管理密码和端口（直接回车用默认值，端口默认3000）
+
+4. 部署完成后会显示访问地址和密码
+
+【部署完成后】
+
+  访问地址：http://你的服务器IP:3000
+  管理密码：部署时设置的密码
+
+# 1. 永久放行 3000 端口
+sudo firewall-cmd --zone=public --add-port=3000/tcp --permanent
+
+# 2. 重新加载防火墙配置使其生效
+sudo firewall-cmd --reload
+
+
+【常用命令】
+
+  查看状态：pm2 status
+  查看日志：pm2 logs apk-server
+  重启服务：pm2 restart apk-server
+  停止服务：pm2 stop apk-server
+
+【重新部署 / 更新】
+
+  直接覆盖文件后执行：
+  cd /www/wwwroot/APK && bash install.sh
+
+  脚本会自动检测已有配置，直接回车保持不变。
+
+【目录结构】
+
+  APK/
+  ├── server.js          # 后端主入口
+  ├── store.js           # 数据读写模块
+  ├── package.json       # 依赖配置
+  ├── install.sh         # 一键部署脚本
+  ├── data/              # 数据目录
+  │   ├── devices.json   # 设备数据
+  │   ├── files.json     # 文件数据
+  │   ├── file_process.json  # 处理状态
+  │   └── logs.json      # 日志数据
+  └── public/            # 前端文件
+      ├── index.html     # 管理后台页面
+      ├── app.js         # 前端逻辑
+      ├── style.css      # 样式
+      └── uploads/       # 上传文件存储
+
+【注意事项】
+
+  1. 端口默认 3000，如需修改请在部署时设置或编辑 .env 文件
+  2. 云服务器需在安全组中放行对应端口
+  3. 服务器防火墙也需放行端口（脚本会自动处理）
+  4. 设备端脚本中的服务器地址需与实际部署地址一致

@@ -1,0 +1,4 @@
+/build
+.project
+.settings
+release/output-metadata.json

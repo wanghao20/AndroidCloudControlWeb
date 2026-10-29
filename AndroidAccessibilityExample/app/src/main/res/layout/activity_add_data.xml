@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    android:fitsSystemWindows="true">
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_above="@+id/ll_bottom"
+            android:layout_alignParentTop="true"
+            android:layout_marginBottom="30dp"
+            android:fadingEdge="vertical"
+            android:fadingEdgeLength="5dp"
+            android:requiresFadingEdge="vertical"
+            android:scrollbars="none">
+
+            <androidx.appcompat.widget.LinearLayoutCompat
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <me.codeboy.android.aligntextview.AlignTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:lineSpacingMultiplier="1.5"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="点击下方的＂创建规则＂按键，将会出现一个用于创建规则的悬浮窗，你可以通过该悬浮窗添加页面的控件或坐标，这样在该控件或坐标再次出现时就会自动对其执行点击动作。"
+                    android:textColor="@color/text_color" />
+
+                <me.codeboy.android.aligntextview.AlignTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:lineSpacingMultiplier="1.5"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="如果你添加了某个页面的控件或者坐标，则在该页面出现时程序就会自动检索该页面的内容，这也许会在一定的程度上造成卡顿，所以为了不影响体验，请合理添加控件或坐标。"
+                    android:textColor="@color/text_color" />
+
+                <me.codeboy.android.aligntextview.AlignTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:lineSpacingMultiplier="1.5"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="添加控件：点击＂显示布局＂按键，在布局分析框出现后选择相应的控件，然后点击＂添加控件＂按键即可。"
+                    android:textColor="@color/text_color" />
+
+                <me.codeboy.android.aligntextview.AlignTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:lineSpacingMultiplier="1.5"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="添加坐标：点击＂显示准星＂按键，拖动准星选择相应的坐标，然后点击＂添加坐标＂按键即可。"
+                    android:textColor="@color/text_color" />
+
+                <me.codeboy.android.aligntextview.AlignTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:lineSpacingMultiplier="1.5"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="重要提示：长按出现的悬浮窗口，可以快速打开当前应用的规则管理页面。"
+                    android:textColor="@color/text_color" />
+
+                <me.codeboy.android.aligntextview.AlignTextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:lineSpacingMultiplier="1.5"
+                    android:paddingStart="10dp"
+                    android:paddingEnd="10dp"
+                    android:text="额外说明：对于系统应用、输入法应用、桌面应用，请谨慎选择是否要为其创建规则，这类应用开启后可能会频繁触发控件的检索，引起卡顿。"
+                    android:textColor="@color/text_color" />
+            </androidx.appcompat.widget.LinearLayoutCompat>
+        </ScrollView>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:id="@+id/ll_bottom"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:orientation="vertical">
+
+            <androidx.appcompat.widget.LinearLayoutCompat
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="12dp"
+                android:layout_marginBottom="20dp"
+                android:gravity="center_vertical">
+
+                <androidx.appcompat.widget.AppCompatCheckBox
+                    android:id="@+id/dbClick"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:button="@drawable/check_select"
+                    android:paddingHorizontal="5dp"
+                    android:paddingVertical="10dp"
+                    android:text="双击屏幕捕获控件 (默认右上角)" />
+
+                <androidx.appcompat.widget.AppCompatTextView
+                    android:id="@+id/dbClick_setting"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginHorizontal="5dp"
+                    android:paddingVertical="10dp"
+                    android:text="调整触发区域"
+                    android:textColor="#0000ff" />
+            </androidx.appcompat.widget.LinearLayoutCompat>
+
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/start"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="10dp"
+                android:layout_marginBottom="20dp"
+                android:background="@drawable/button_selector"
+                android:gravity="center"
+                android:text="创建规则"
+                android:textColor="@android:color/white" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+    </RelativeLayout>
+
+    <include layout="@layout/view_no_vip" />
+</FrameLayout>

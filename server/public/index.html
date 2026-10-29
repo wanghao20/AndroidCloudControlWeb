@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GROUP CONTROL · 群控系统登录</title>
+  <link rel="stylesheet" href="global.css"/>
+  <link rel="stylesheet" href="index.css"/>
+</head>
+
+<body>
+  <!-- 背景层次 -->
+  <div class="bg-layers" aria-hidden="true">
+    <div class="bg-grid"></div>
+    <div class="bg-glow-cyan"></div>
+    <div class="bg-glow-magenta"></div>
+    <div class="bg-scanlines"></div>
+  </div>
+
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- ==================== 视图 1：登录界面 ==================== -->
+  <section id="loginSection" class="page-wrap">
+    <div class="hud-panel login-panel">
+      <span class="hud-corner hud-corner--tl"></span>
+      <span class="hud-corner hud-corner--tr"></span>
+      <span class="hud-corner hud-corner--bl"></span>
+      <span class="hud-corner hud-corner--br"></span>
+
+      <div class="login-header">
+        <div class="login-header-titles hud-logo">
+          <span class="hud-logo-en">GROUP CONTROL SYSTEM LOGIN</span>
+          <span class="hud-logo-zh">群控系统登录</span>
+        </div>
+        <div class="login-header-status" aria-label="OFFLINE">
+          <span class="login-status-dot"></span>
+          <span class="login-status-text">OFFLINE</span>
+        </div>
+      </div>
+
+      <form id="loginForm" class="login-form">
+        <div class="form-group">
+          <label>账户名称</label>
+          <input type="text" id="loginUsername" placeholder="管理员账号" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label>登录密码</label>
+          <input type="password" id="loginPassword" placeholder="登录密码" required autocomplete="current-password" />
+        </div>
+        <button type="submit" class="hud-btn login-submit-btn">[ 验证并登录 ]</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- ==================== 视图 2：控制台主页 ==================== -->
+  <div id="dashboardSection" class="page-shell hidden">
+    <header class="topbar hud-panel">
+      <span class="hud-corner hud-corner--tl"></span>
+      <span class="hud-corner hud-corner--tr"></span>
+      <span class="hud-corner hud-corner--bl"></span>
+      <span class="hud-corner hud-corner--br"></span>
+      <div class="hud-logo">
+        <span class="hud-logo-en">CLOUD CTRL</span>
+        <span class="hud-logo-zh">设备管理中枢</span>
+      </div>
+      <div class="topbar-right">
+        <div class="hud-status">
+          <span id="dashStatusDot" class="status-dot"></span>
+          <span id="dashStatusText">LINKED</span>
+        </div>
+        <span id="remainingTimeBadge" class="time-badge hidden"></span>
+        <span id="codecModeBadge" class="time-badge hidden" title="根据当前浏览器能力，列表页已通知手机编码方式"></span>
+        <div id="topAction"></div>
+        <button id="refreshButton" class="action-btn">[ 刷新列表 ]</button>
+        <button id="logoutButton" class="action-btn logout-btn">[ 登出系统 ]</button>
+      </div>
+    </header>
+
+    <div class="dashboard-stats hud-panel">
+      <span class="hud-corner hud-corner--tl"></span>
+      <span class="hud-corner hud-corner--tr"></span>
+      <span class="hud-corner hud-corner--bl"></span>
+      <span class="hud-corner hud-corner--br"></span>
+
+      <div class="core-data core-data--compact">
+        <div class="core-data-label">REGISTERED UNITS</div>
+        <div id="dashCoreValue" class="core-data-value">0 台设备</div>
+        <div class="core-data-sub">当前过滤条件下可见设备总数</div>
+      </div>
+      <div class="refresh-bar"><div id="dashRefreshBar" class="refresh-bar-fill"></div></div>
+    </div>
+
+    <main class="list-card hud-panel">
+      <span class="hud-corner hud-corner--tl"></span>
+      <span class="hud-corner hud-corner--tr"></span>
+      <span class="hud-corner hud-corner--bl"></span>
+      <span class="hud-corner hud-corner--br"></span>
+
+      <div class="list-header">
+        <div>
+          <h2>在线设备管理实例 <span id="deviceOnlineStats" class="device-online-stats"></span></h2>
+          <p class="subtitle">点击下方任意卡片即可切入单台高频同步控制中枢</p>
+        </div>
+        <div class="group-control-bar">
+          <div class="group-filter">
+            <label for="groupFilterSelect">GROUP FILTER</label>
+            <select id="groupFilterSelect">
+              <option value="ALL">全部分组</option>
+              <option value="UNGROUPED">未分组</option>
+            </select>
+          </div>
+          <button id="selectGroupBtn" class="action-btn">[ 本组全选 ]</button>
+          <button id="syncGroupBtn" class="action-btn">[ 同步群控 ]</button>
+          <button id="batchGroupControlBtn" class="action-btn">[ 按分组群控 ]</button>
+          <button id="groupUploadBtn" class="action-btn">[ 按分组上传 ]</button>
+        </div>
+        <div class="device-search-bar">
+          <label for="deviceSearchInput">SEARCH</label>
+          <input
+            type="search"
+            id="deviceSearchInput"
+            class="device-search-input"
+            placeholder="搜索分组 / 机型 / 备注"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+      </div>
+
+      <div id="deviceGridViewport" class="grid-virtual-viewport hud-scrollbar">
+        <div class="grid-layout" id="deviceGrid"></div>
+      </div>
+      <div id="virtualScrollBar" class="virtual-scroll-bar hidden"></div>
+    </main>
+  </div>
+
+  <input type="file" id="groupFileInput" accept="*/*" class="hidden" style="display:none" />
+  <script src="ws-debug.js"></script>
+  <script src="codec-client.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

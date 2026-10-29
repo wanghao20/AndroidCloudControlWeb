@@ -1,0 +1,3701 @@
+
+const params = new URLSearchParams(window.location.search);
+/** 投屏诊断：URL ?diag=1 或 localStorage.streamDiag=1 */
+const StreamDiag = {
+    enabled() {
+        try {
+            if (params.has("diag")) return true;
+            return localStorage.getItem("streamDiag") === "1";
+        } catch (_) {
+            return params.has("diag");
+        }
+    },
+    log(...args) {
+        if (!this.enabled()) return;
+        console.log("[StreamDiag]", ...args);
+    },
+    warn(...args) {
+        if (!this.enabled()) return;
+        console.warn("[StreamDiag]", ...args);
+    },
+};
+
+const deviceId = params.get("id");
+const syncGroupParam = params.get("syncGroup");
+const syncGroupDeviceIds = syncGroupParam ? syncGroupParam.split(",").filter(Boolean) : [];
+const token = localStorage.getItem("adminToken");
+
+/** 当前编码模式：默认 base64；仅用户点击编码按钮后才改为 webp / h264 */
+let currentCodecMode = "base64";
+
+const deviceCanvas = document.getElementById("deviceCanvas");
+const deviceImageA = document.getElementById("deviceImageA");
+const deviceImageB = document.getElementById("deviceImageB");
+const deviceFrameStack = document.getElementById("deviceFrameStack");
+const btnCodecBase64 = document.getElementById("btnCodecBase64");
+const btnCodecWebp = document.getElementById("btnCodecWebp");
+const btnCodecH264 = document.getElementById("btnCodecH264");
+const swipeOverlay = document.getElementById("swipeOverlay");
+const swipeTrailCanvas = document.getElementById("swipeTrailCanvas");
+/** 用于坐标换算与点击区域（画面统一走 Canvas） */
+let deviceImage = deviceCanvas || deviceImageA;
+let base64FrontEl = deviceImageA;
+let base64BackEl = deviceImageB;
+let base64BackLoading = false;
+let pendingBase64FrameSrc = null;
+/** 已显示帧指纹，用于跳过静止重发/重复 JSON，减轻闪屏 */
+let lastBase64DisplayFp = "";
+/** Base64 画面上屏最小间隔，避免操作后帧暴增导致双缓冲连闪 */
+const BASE64_MIN_PAINT_MS = 280;
+/** 切后台标签页后延迟降档，避免短暂 hidden 触发 low→high 闪一下 */
+const VISIBILITY_LOW_DELAY_MS = 2500;
+/** 合并重复 elevate，避免 bootstrap + ack + 全屏连发 9 条 control */
+const ELEVATE_CONTROL_COALESCE_MS = 1200;
+let lastElevateControlSentAt = 0;
+/** Base64 JSON 发送节流（与手机 LEGACY_MIN_JSON_TX_MS 对齐） */
+const BASE64_EXPECTED_MAX_FPS = 4;
+let visibilityLowTimer = null;
+let lastBase64PaintAt = 0;
+let base64PaintCoalesceTimer = null;
+let lastRequestFrameSentAt = 0;
+let lastBase64ObjectUrl = null;
+let frameCanvasCtx = null;
+let lastCanvasPaintW = 0;
+let lastCanvasPaintH = 0;
+let latestFrameBitmap = null;
+let pendingFrameBlob = null;
+/** WS 同 tick 内多帧合并为一次处理，减轻主线程积压 */
+let latestWsBinary = null;
+let frameDecodeInFlight = false;
+let wsBinaryRaf = 0;
+let framesSkippedCoalesce = 0;
+let framesPaintedSession = 0;
+const paintFpsSamples = [];
+let lastPaintFpsAt = 0;
+let lastWsBinaryRxAt = 0;
+let wsBinaryRxCount = 0;
+let wsBinaryRxWindowBytes = 0;
+let wsBinaryRxBytes = 0;
+let wsBinaryRxWindowCount = 0;
+/** Base64 JSON 帧收帧计数（与二进制 WS 分开统计） */
+let jsonFrameRxWindowCount = 0;
+let lastStreamDiagSummaryAt = 0;
+let lastCaptureStatusPaintAt = 0;
+const deviceMeta = document.getElementById("deviceMeta");
+const deviceTitle = document.getElementById("deviceTitle");
+const masterDeviceRow = document.getElementById("masterDeviceRow");
+const masterDeviceSelect = document.getElementById("masterDeviceSelect");
+const viewerFrame = document.getElementById("viewerFrame");
+const viewerTips = document.getElementById("viewerTips");
+const captureSpeedStatus = document.getElementById("captureSpeedStatus");
+const btnCloseExpanded = document.getElementById("btnCloseExpanded");
+const btnFetchUiNodes = document.getElementById("btnFetchUiNodes");
+const uiNodeModal = document.getElementById("uiNodeModal");
+const btnCloseUiNodeModal = document.getElementById("btnCloseUiNodeModal");
+const uiNodeStatus = document.getElementById("uiNodeStatus");
+const uiNodeData = document.getElementById("uiNodeData");
+
+const toggleClickMode =
+    document.getElementById("toggleClickMode");
+
+const toggleSwipeMode =
+    document.getElementById("toggleSwipeMode");
+const togglePressMode =
+    document.getElementById(
+        "togglePressMode"
+    );
+
+if (!deviceId) {
+
+    document.body.innerHTML =
+        "<div style='padding:40px;text-align:center;color:#ef4444;'>未指定设备ID</div>";
+
+    throw new Error("missing deviceId");
+}
+
+/** 仅主屏设备执行的命令（群控时不广播到从机） */
+const MASTER_ONLY_COMMANDS = new Set([
+    "setCaptureSpeed",
+    "fetchUiNodes",
+    "pauseCapture",
+    "resumeCapture",
+]);
+
+function updateGroupControlTitle() {
+    if (!deviceTitle) return;
+    if (syncGroupDeviceIds.length < 2) {
+        deviceTitle.textContent = `设备控制：${deviceId}`;
+        if (masterDeviceRow) masterDeviceRow.classList.add("hidden");
+        return;
+    }
+    const shortId = deviceId.length > 8 ? `…${deviceId.slice(-8)}` : deviceId;
+    deviceTitle.textContent =
+        `设备控制：${deviceId}（群控 ${syncGroupDeviceIds.length} 台 · 主屏 ${shortId}）`;
+    if (masterDeviceRow) masterDeviceRow.classList.remove("hidden");
+}
+
+function initMasterDeviceSelect() {
+    if (!masterDeviceSelect || syncGroupDeviceIds.length < 2) return;
+    masterDeviceSelect.innerHTML = syncGroupDeviceIds
+        .map((id) => {
+            const selected = String(id) === String(deviceId) ? " selected" : "";
+            const label = id.length > 16 ? `…${id.slice(-12)}` : id;
+            return `<option value="${id}"${selected}>${label}</option>`;
+        })
+        .join("");
+    masterDeviceSelect.onchange = () => {
+        const newId = masterDeviceSelect.value;
+        if (!newId || String(newId) === String(deviceId)) return;
+        const syncParam = encodeURIComponent(syncGroupDeviceIds.join(","));
+        window.location.href =
+            `device.html?id=${encodeURIComponent(newId)}&syncGroup=${syncParam}`;
+    };
+}
+
+/** 点击坐标映射到手机真实分辨率（投屏 JPEG 已缩放，不能用 naturalWidth） */
+function getDeviceResolution() {
+    return {
+        w: deviceInfo?.width || 1080,
+        h: deviceInfo?.height || 2400,
+    };
+}
+
+function formatControlAck(msg) {
+    const r = msg.result;
+    if (r && typeof r.success === "number" && Array.isArray(msg.deviceIds)) {
+        const total = msg.deviceIds.length;
+        const ok = r.success;
+        const failed = r.failed || 0;
+        if (failed === 0) {
+            return `✅ 群控指令已下发（${ok}/${total}）`;
+        }
+        const failedIds = (r.failedIds || []).slice(0, 2).join(", ");
+        const suffix = (r.failedIds || []).length > 2 ? "…" : "";
+        return `⚠️ 部分失败 ${ok}/${total}${failedIds ? `，失败：${failedIds}${suffix}` : ""}`;
+    }
+    const ok = msg.success === true || (r && r.success > 0);
+    return ok ? "✅ 指令已下发" : "❌ 指令下发失败";
+}
+
+updateGroupControlTitle();
+initMasterDeviceSelect();
+
+let ws = null;
+/** 控制页 WebSocket 是否已 open（与手机是否在线无关） */
+let controlWsConnected = false;
+let deviceInfo = null;
+/** 近期收到过实时画面则视为在线（避免 device_list 快照滞后） */
+let deviceStreamOnline = false;
+/** 收到 device_disconnected 后保持离线，直到再次收帧/注册/服务端确认 */
+let deviceForceOffline = false;
+let lastDeviceFrameRxAt = 0;
+const DEVICE_ONLINE_STALE_MS = 20000;
+let deviceMetaRefreshTimer = null;
+let wsReconnectTimer = null;
+let wsReconnectAttempt = 0;
+/** 为 false 时不再重连 WS（已离开控制页） */
+let controlSessionActive = true;
+/** StreamDiag 会话起点，用于启动 10s 内不刷「收帧偏低」 */
+let streamDiagSessionStartedAt = 0;
+
+let isExpanded = false;
+
+let touchTimer = null;
+
+let isLongPressed = false;
+
+let ignoreNextClick = false;
+let ignoreNextClickFromPress = false;
+let sendControlAnimationTimer = null;
+let lastSwipeSentAt = 0;
+const SWIPE_THROTTLE_MS = 80;
+let swipeCapturingSlow = false;
+
+let frameRafScheduled = false;
+let framePaintGeneration = 0;
+/** Canvas 内实际画面区域（像素坐标，用于点击换算） */
+let lastFrameContentRect = null;
+
+const WEB_FRAME_MAGIC = 0xf2;
+
+const IMAGE_FORMAT_JPEG = 0x00;
+const IMAGE_FORMAT_WEBP = 0x01;
+const IMAGE_FORMAT_H264 = 0x02;
+const H264_FRAME_CONFIG = 0;
+const H264_FRAME_KEY = 1;
+const H264_FRAME_DELTA = 2;
+
+let h264Decoder = null;
+let h264DecoderReady = false;
+let h264ChunkTimestampUs = 0;
+
+function canUseWebCodecsH264() {
+    return window.CodecClient
+        ? CodecClient.canUseWebCodecsH264()
+        : typeof VideoDecoder !== "undefined" &&
+              typeof EncodedVideoChunk !== "undefined" &&
+              window.isSecureContext === true;
+}
+
+function getWebCodecsBlockReason() {
+    if (window.CodecClient) return CodecClient.getWebCodecsBlockReason();
+    if (typeof VideoDecoder === "undefined" || typeof EncodedVideoChunk === "undefined") {
+        return "浏览器缺少 VideoDecoder（请用较新 Chrome/Edge）";
+    }
+    if (!window.isSecureContext) {
+        return `当前为 ${location.protocol} 非安全连接，H.264 需 HTTPS 或 localhost`;
+    }
+    return "";
+}
+
+let lastPreferWebpSentAt = 0;
+
+/** 强制手机 WebP（HTTP 可重复下发，直到收流不再是 H.264） */
+function forcePreferWebp(reason, options = {}) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (currentCodecMode === "base64") return;
+    const allowRepeat = options.allowRepeat === true || isPublicHttpPage();
+    const now = Date.now();
+    if (!allowRepeat && webpFallbackRequested) return;
+    if (allowRepeat && now - lastPreferWebpSentAt < 800) return;
+    lastPreferWebpSentAt = now;
+    webpFallbackRequested = true;
+    const msg = reason || "网页无法解码 H.264";
+    console.warn("[codec] 请求手机改用 WebP:", msg);
+    sendControl({ type: "preferWebp" }, { skipFeedback: true });
+    updateCaptureStatusDisplay();
+    if (viewerTips && options.updateTips !== false) {
+        viewerTips.innerHTML = `⚠️ ${msg}，已通知手机改用 WebP`;
+    }
+}
+
+function requestWebpFallback(reason) {
+    forcePreferWebp(reason, { allowRepeat: false, updateTips: true });
+}
+
+function getDefaultViewerQuality() {
+    return isPublicHttpPage() ? "smooth" : "quality";
+}
+
+function getViewerQualityMode() {
+    try {
+        const v = localStorage.getItem(STORAGE_VIEWER_QUALITY);
+        if (v === "smooth" || v === "quality") return v;
+    } catch (_) {
+        /* ignore */
+    }
+    return getDefaultViewerQuality();
+}
+
+function setViewerQualityMode(mode) {
+    const next = mode === "smooth" ? "smooth" : "quality";
+    try {
+        localStorage.setItem(STORAGE_VIEWER_QUALITY, next);
+    } catch (_) {
+        /* ignore */
+    }
+    updateViewerQualityButtons();
+    const speed = pickCaptureSpeedForSession();
+    captureProfileHint = speed;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // 「流畅/清晰」只调帧率，不自动改编码（编码仅由 Base64/WebP/H.264 按钮切换）
+    if (currentCodecMode === "base64") {
+        sendControl({ type: "setCodecMode", mode: "base64" }, { skipFeedback: true });
+        codecPreferenceSynced = true;
+        if (captureElevated) {
+            sendControl({ type: "setCaptureSpeed", speed: "high" }, { skipFeedback: true });
+        } else {
+            sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+        }
+        updateCaptureStatusDisplay(captureElevated ? "high" : speed);
+        StreamDiag.log("画质切换 →", next, "保持 Base64");
+        return;
+    }
+    codecPreferenceSynced = false;
+    if (next === "quality" && currentCodecMode !== "base64") {
+        syncCaptureCodecPreference({ force: true });
+    } else if (next === "quality" && currentCodecMode === "base64") {
+        sendControl({ type: "setCodecMode", mode: "base64" }, { skipFeedback: true });
+        codecPreferenceSynced = true;
+    } else {
+        webpFallbackRequested = true;
+        codecPreferenceSynced = true;
+    }
+    sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+    updateCaptureStatusDisplay(speed);
+    StreamDiag.log("画质切换 →", next, "setCaptureSpeed", speed);
+}
+
+function updateViewerQualityButtons() {
+    const mode = getViewerQualityMode();
+    const btnSmooth = document.getElementById("btnQualitySmooth");
+    const btnQuality = document.getElementById("btnQualityHigh");
+    if (btnSmooth) btnSmooth.classList.toggle("active", mode === "smooth");
+    if (btnQuality) btnQuality.classList.toggle("active", mode === "quality");
+}
+
+function initViewerQualityBar() {
+    captureProfileHint = pickCaptureSpeedForSession();
+    updateViewerQualityButtons();
+    const btnSmooth = document.getElementById("btnQualitySmooth");
+    const btnQuality = document.getElementById("btnQualityHigh");
+    if (btnSmooth) {
+        btnSmooth.addEventListener("click", () => setViewerQualityMode("smooth"));
+    }
+    if (btnQuality) {
+        btnQuality.addEventListener("click", () => setViewerQualityMode("quality"));
+    }
+}
+
+/** 按浏览器能力同步编码（仅 webp/h264 用户选项；Base64 模式不自动 preferWebp/allowH264） */
+function syncCaptureCodecPreference(options = {}) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (currentCodecMode === "base64") {
+        codecPreferenceSynced = true;
+        return;
+    }
+    const force = options.force === true;
+    if (!force && codecPreferenceSynced) return;
+
+    if (getViewerQualityMode() === "smooth") {
+        sendControl({ type: "preferWebp" }, { skipFeedback: true });
+        webpFallbackRequested = true;
+        codecPreferenceSynced = true;
+        return;
+    }
+
+    if (window.CodecClient) {
+        CodecClient.detectAndPersist();
+        const cmd = CodecClient.getCodecCommand();
+        if (cmd.type === "allowH264" && canUseWebCodecsH264()) {
+            webpFallbackRequested = false;
+            sendControl(cmd, { skipFeedback: true });
+            codecPreferenceSynced = true;
+        } else {
+            forcePreferWebp(
+                CodecClient.getWebCodecsBlockReason() || "网页不支持 H.264 解码",
+                { allowRepeat: true, updateTips: false }
+            );
+            codecPreferenceSynced = true;
+        }
+        return;
+    }
+    if (canUseWebCodecsH264()) {
+        webpFallbackRequested = false;
+        sendControl({ type: "allowH264" }, { skipFeedback: true });
+        codecPreferenceSynced = true;
+    } else {
+        forcePreferWebp(getWebCodecsBlockReason() || "网页不支持 H.264 解码", {
+            allowRepeat: true,
+            updateTips: false,
+        });
+        codecPreferenceSynced = true;
+    }
+}
+
+function clearH264NoFrameFallbackTimer() {
+    if (h264NoFrameFallbackTimer) {
+        clearTimeout(h264NoFrameFallbackTimer);
+        h264NoFrameFallbackTimer = null;
+    }
+}
+
+/** 已收 H.264 CONFIG 但长时间无画面 → 自动 preferWebp */
+function scheduleH264NoFrameFallback() {
+    clearH264NoFrameFallbackTimer();
+    if (!canUseWebCodecsH264() || webpFallbackRequested) return;
+    h264NoFrameFallbackTimer = setTimeout(() => {
+        h264NoFrameFallbackTimer = null;
+        if (
+            lastRxStreamFormat === "h264" &&
+            h264ConfigReceived &&
+            !lastFramePaintAt &&
+            !webpFallbackRequested
+        ) {
+            requestWebpFallback("H.264 长时间无画面");
+        }
+    }, H264_NO_FRAME_FALLBACK_MS);
+}
+
+/** 实际收流/解码状态（与手机 captureProfile 无关） */
+let captureProfileHint = "";
+let lastRxStreamFormat = null;
+let h264ConfigReceived = false;
+let lastFramePaintAt = 0;
+/** 本会话是否已向手机请求过 WebP（避免重复刷指令） */
+let webpFallbackRequested = false;
+let h264NoFrameFallbackTimer = null;
+const H264_NO_FRAME_FALLBACK_MS = 800;
+const CAPTURE_BOOTSTRAP_RETRY_MS = 2000;
+const CAPTURE_BOOTSTRAP_MAX_RETRIES = 3;
+/** 控制页无操作超过该时间则降回 low */
+const CONTROL_IDLE_LOW_MS = 30000;
+let controlIdleLowTimer = null;
+/** 是否在控制页 elevated 高刷（离开页 / 30s 无操作后为 false） */
+let captureElevated = false;
+const STORAGE_VIEWER_QUALITY = "viewerQualityMode";
+/** 本会话是否已下发过编码偏好（避免进控制页重复 allowH264 / preferWebp） */
+let codecPreferenceSynced = false;
+let captureBootstrapRetryTimer = null;
+let captureBootstrapRetryCount = 0;
+let controlPingReassertAt = 0;
+let lastDowngradePingWarnAt = 0;
+let h264DecodeFlushScheduled = false;
+let pendingH264Decode = null;
+let pendingH264VideoFrame = null;
+let h264VideoPaintScheduled = false;
+
+const INTERACTIVE_CONTROL_TYPES = new Set([
+    "click",
+    "swipe",
+    "longClick",
+    "press",
+    "input",
+]);
+
+/** 仅滑动时丢弃积压画面（点击保留上一帧直到新帧，降低「卡几秒」体感） */
+function shouldSkipStaleDisplayFrames(command) {
+    return command && command.type === "swipe";
+}
+
+/** 取消进行中的旧解码；保留 pending 帧，避免滑动后收帧变慢时出现长时间无画 */
+function skipStaleDisplayFrames() {
+    framePaintGeneration++;
+    latestWsBinary = null;
+    pendingH264Decode = null;
+    if (pendingH264VideoFrame) {
+        try {
+            pendingH264VideoFrame.close();
+        } catch (_) {
+            /* ignore */
+        }
+        pendingH264VideoFrame = null;
+    }
+    h264VideoPaintScheduled = false;
+}
+/** 打开控制页后是否已预拉高帧（避免进全屏再次重建管线） */
+let captureSessionPrewarmed = false;
+
+function detectFrameMime(bytes) {
+    if (bytes.length >= 12 &&
+        bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+        bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+        return "image/webp";
+    }
+    return "image/jpeg";
+}
+
+function parseWebFramePacket(data) {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (bytes.length < 4 || bytes[0] !== WEB_FRAME_MAGIC) return null;
+
+    const second = bytes[1];
+    // V2: [magic][format][idLen:2][deviceId][image] — format=0(JPEG) 也必须走此分支
+    if (
+        second === IMAGE_FORMAT_JPEG ||
+        second === IMAGE_FORMAT_WEBP ||
+        second === IMAGE_FORMAT_H264 ||
+        second === 0x03
+    ) {
+        const idLen = (bytes[2] << 8) | bytes[3];
+        const headerLen = 4 + idLen;
+        if (headerLen >= bytes.length) return null;
+        const deviceIdStr = new TextDecoder().decode(bytes.subarray(4, headerLen));
+        const imageData = bytes.subarray(headerLen);
+        if (!imageData.length) return null;
+        const resolvedFormat =
+            second === IMAGE_FORMAT_JPEG ? IMAGE_FORMAT_JPEG : second;
+        const mimeType =
+            second === IMAGE_FORMAT_WEBP
+                ? "image/webp"
+                : second === IMAGE_FORMAT_H264 || second === 0x03
+                  ? "video/h264"
+                  : "image/jpeg";
+        return {
+            deviceId: deviceIdStr,
+            imageData,
+            mimeType,
+            format: resolvedFormat,
+        };
+    }
+
+    const idLen = (bytes[1] << 8) | bytes[2];
+    const headerLen = 3 + idLen;
+    if (headerLen >= bytes.length) return null;
+    const deviceIdStr = new TextDecoder().decode(bytes.subarray(3, headerLen));
+    const imageData = bytes.subarray(headerLen);
+    if (!imageData.length) return null;
+    return { deviceId: deviceIdStr, imageData, mimeType: detectFrameMime(imageData), format: null };
+}
+
+/** 去掉 Android csd / Annex-B 前的 00 00 01 或 00 00 00 01 起始码 */
+function stripH264StartCode(nal) {
+    const b = nal instanceof Uint8Array ? nal : new Uint8Array(nal);
+    let o = 0;
+    while (o + 3 < b.length && b[o] === 0 && b[o + 1] === 0) {
+        if (b[o + 2] === 1) return b.subarray(o + 3);
+        if (o + 3 < b.length && b[o + 2] === 0 && b[o + 3] === 1) return b.subarray(o + 4);
+        o++;
+    }
+    return b;
+}
+
+function codecStringFromSps(sps) {
+    const nal = stripH264StartCode(sps);
+    if (nal.length < 4) return "avc1.42E01F";
+    const hex = (v) => v.toString(16).padStart(2, "0").toUpperCase();
+    return `avc1.${hex(nal[1])}${hex(nal[2])}${hex(nal[3])}`;
+}
+
+/** WebCodecs 在带 description 时期望 AVCC（4 字节长度 + NAL）；Annex-B 需转换 */
+function annexBToAvcc(data) {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    if (bytes.length < 4) return bytes;
+    const isAnnexB =
+        bytes[0] === 0 &&
+        bytes[1] === 0 &&
+        (bytes[2] === 1 || (bytes[2] === 0 && bytes[3] === 1));
+    if (!isAnnexB) return bytes;
+
+    const nals = [];
+    const findStart = (from) => {
+        for (let j = from; j + 3 < bytes.length; j++) {
+            if (bytes[j] === 0 && bytes[j + 1] === 0) {
+                if (bytes[j + 2] === 1) return { pos: j, len: 3 };
+                if (j + 3 < bytes.length && bytes[j + 2] === 0 && bytes[j + 3] === 1) {
+                    return { pos: j, len: 4 };
+                }
+            }
+        }
+        return null;
+    };
+
+    let cur = findStart(0);
+    while (cur) {
+        const nalStart = cur.pos + cur.len;
+        const next = findStart(nalStart);
+        const nalEnd = next ? next.pos : bytes.length;
+        if (nalEnd > nalStart) nals.push(bytes.subarray(nalStart, nalEnd));
+        cur = next;
+    }
+    if (!nals.length) return bytes;
+
+    let total = 0;
+    for (const n of nals) total += 4 + n.length;
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const n of nals) {
+        out[o++] = (n.length >>> 24) & 0xff;
+        out[o++] = (n.length >>> 16) & 0xff;
+        out[o++] = (n.length >>> 8) & 0xff;
+        out[o++] = n.length & 0xff;
+        out.set(n, o);
+        o += n.length;
+    }
+    return out;
+}
+
+function buildAvcDescription(sps, pps) {
+    const spsNal = stripH264StartCode(sps);
+    const ppsNal = stripH264StartCode(pps);
+    const out = new Uint8Array(spsNal.length + ppsNal.length + 11);
+    let o = 0;
+    out[o++] = 1;
+    out[o++] = spsNal[1] ?? 0x42;
+    out[o++] = sps[2] ?? 0;
+    out[o++] = sps[3] ?? 0;
+    out[o++] = 0xff;
+    out[o++] = 0xe1;
+    out[o++] = (spsNal.length >> 8) & 0xff;
+    out[o++] = spsNal.length & 0xff;
+    out.set(spsNal, o);
+    o += spsNal.length;
+    out[o++] = 1;
+    out[o++] = (ppsNal.length >> 8) & 0xff;
+    out[o++] = ppsNal.length & 0xff;
+    out.set(ppsNal, o);
+    return out;
+}
+
+function parseH264ConfigPayload(payload) {
+    if (payload.length < 8) return null;
+    const spsLen =
+        ((payload[0] & 0xff) << 24) |
+        ((payload[1] & 0xff) << 16) |
+        ((payload[2] & 0xff) << 8) |
+        (payload[3] & 0xff);
+    if (4 + spsLen + 4 > payload.length) return null;
+    const sps = payload.subarray(4, 4 + spsLen);
+    const base = 4 + spsLen;
+    const ppsLen =
+        ((payload[base] & 0xff) << 24) |
+        ((payload[base + 1] & 0xff) << 16) |
+        ((payload[base + 2] & 0xff) << 8) |
+        (payload[base + 3] & 0xff);
+    if (base + 4 + ppsLen > payload.length) return null;
+    const pps = payload.subarray(base + 4, base + 4 + ppsLen);
+    return { sps: stripH264StartCode(sps), pps: stripH264StartCode(pps) };
+}
+
+function queueDecodedVideoFrame(videoFrame) {
+    if (pendingH264VideoFrame) {
+        try {
+            pendingH264VideoFrame.close();
+        } catch (_) {
+            /* ignore */
+        }
+    }
+    pendingH264VideoFrame = videoFrame;
+    if (h264VideoPaintScheduled) return;
+    h264VideoPaintScheduled = true;
+    const run = () => {
+        h264VideoPaintScheduled = false;
+        const frame = pendingH264VideoFrame;
+        pendingH264VideoFrame = null;
+        if (frame) drawDecodedVideoFrame(frame);
+    };
+    if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(run);
+    } else if (typeof queueMicrotask === "function") {
+        queueMicrotask(run);
+    } else {
+        Promise.resolve().then(run);
+    }
+}
+
+function drawDecodedVideoFrame(videoFrame) {
+    if (!deviceCanvas || !frameCanvasCtx) {
+        try {
+            videoFrame.close();
+        } catch (_) {
+            /* ignore */
+        }
+        return;
+    }
+    try {
+        const bw = videoFrame.displayWidth || videoFrame.codedWidth;
+        const bh = videoFrame.displayHeight || videoFrame.codedHeight;
+        if (drawSourceLetterboxed(videoFrame, bw, bh)) {
+            lastFramePaintAt = Date.now();
+            recordFramePainted();
+            markDeviceOnlineFromStream("h264_paint");
+            clearH264NoFrameFallbackTimer();
+            updateCaptureStatusDisplay();
+        }
+    } finally {
+        try {
+            videoFrame.close();
+        } catch (_) {
+            /* ignore */
+        }
+    }
+}
+
+async function ensureH264Decoder(sps, pps) {
+    if (!canUseWebCodecsH264()) return false;
+    if (h264Decoder && h264DecoderReady && h264Decoder.state === "configured") {
+        return true;
+    }
+    if (h264Decoder) {
+        try {
+            h264Decoder.close();
+        } catch (_) {
+            /* ignore */
+        }
+        h264Decoder = null;
+        h264DecoderReady = false;
+    }
+    try {
+        h264Decoder = new VideoDecoder({
+            output: (frame) => {
+                queueDecodedVideoFrame(frame);
+            },
+            error: (e) => console.warn("[h264] decode error", e),
+        });
+        const spsNal = stripH264StartCode(sps);
+        const ppsNal = stripH264StartCode(pps);
+        h264Decoder.configure({
+            codec: codecStringFromSps(spsNal),
+            description: buildAvcDescription(spsNal, ppsNal),
+            optimizeForLatency: true,
+        });
+        h264ChunkTimestampUs = 0;
+        h264DecoderReady = true;
+        updateCaptureStatusDisplay();
+        return true;
+    } catch (e) {
+        console.warn("[h264] WebCodecs 初始化失败，将等待 WebP 回退", e);
+        h264Decoder = null;
+        h264DecoderReady = false;
+        updateCaptureStatusDisplay();
+        requestWebpFallback("H.264 解码器初始化失败");
+        return false;
+    }
+}
+
+/** 左上角：档位 + 实际收流格式 + 解码是否出画 */
+function isServerProfileDowngrade(name) {
+    const p = String(name || "").toLowerCase();
+    return p === "thumb" || p === "low" || p === "idle";
+}
+
+function getDisplayCaptureProfile() {
+    if (controlSessionActive) {
+        return captureProfileHint || pickCaptureSpeedForSession();
+    }
+    return captureProfileHint || pickCaptureSpeedForSession();
+}
+
+function updateCaptureStatusDisplay(profileHint) {
+    if (!captureSpeedStatus) return;
+    if (profileHint) {
+        if (
+            controlSessionActive &&
+            isServerProfileDowngrade(profileHint)
+        ) {
+            const keep = pickCaptureSpeedForSession();
+            const now = Date.now();
+            if (!lastDowngradePingWarnAt || now - lastDowngradePingWarnAt > 8000) {
+                lastDowngradePingWarnAt = now;
+                StreamDiag.warn("忽略服务端降档", profileHint, "→ 保持", keep);
+            }
+        } else if (!controlSessionActive) {
+            captureProfileHint = profileHint;
+        }
+    }
+
+    const profilePart =
+        captureModeLabel(getDisplayCaptureProfile()) || "画质：—";
+
+    let pipePart = " | 等待画面";
+    if (!lastRxStreamFormat && ws) {
+        if (ws.readyState !== WebSocket.OPEN) {
+            pipePart = " | 等待画面（WS 未连接）";
+        } else if (deviceInfo && !resolveDeviceOnline(deviceInfo)) {
+            pipePart = deviceForceOffline
+                ? " | 等待画面（设备已断开）"
+                : " | 等待画面（设备离线）";
+        } else if (ws.readyState === WebSocket.OPEN && !controlWsConnected) {
+            pipePart = " | 控制通道重连中…";
+        }
+    }
+    if (lastRxStreamFormat === "h264") {
+        if (!canUseWebCodecsH264()) {
+            const why = getWebCodecsBlockReason();
+            pipePart = webpFallbackRequested
+                ? ` | 手机仍发 H.264，切换 WebP 中…${why ? `（${why}）` : ""}`
+                : why
+                  ? ` | 收流 H.264 · ${why}`
+                  : " | 收流 H.264 · 无法解码（无画面）";
+        } else if (!h264ConfigReceived) {
+            pipePart = " | 收流 H.264 · 等待 CONFIG（无画面）";
+        } else if (!h264DecoderReady) {
+            pipePart = " | 收流 H.264 · 解码器初始化失败（无画面）";
+        } else if (!lastFramePaintAt) {
+            pipePart = " | 收流 H.264 · 等待关键帧（无画面）";
+        } else {
+            pipePart = " | 收流 H.264 · 解码正常 ✓";
+        }
+    } else if (lastRxStreamFormat === "webp") {
+        pipePart = lastFramePaintAt
+            ? " | 收流 WebP · 显示正常 ✓"
+            : " | 收流 WebP · 等待首帧";
+    } else if (lastRxStreamFormat === "jpeg") {
+        pipePart = lastFramePaintAt
+            ? " | 收流 Base64 JPEG · 显示正常 ✓"
+            : " | 收流 Base64 JPEG · 等待首帧";
+    }
+
+    const backlog = getDisplayBacklog();
+    const fps =
+        paintFpsSamples.length > 0
+            ? Math.round(
+                  paintFpsSamples.reduce((a, b) => a + b, 0) / paintFpsSamples.length
+              )
+            : 0;
+    let extra = "";
+    if (fps > 0) extra += ` | 显示 ~${fps}fps`;
+    if (backlog > 0) extra += ` | 待绘 ${backlog}`;
+    else if (framesSkippedCoalesce > 0 && fps >= 8) extra += " | 流畅";
+    captureSpeedStatus.textContent = profilePart + pipePart + extra;
+    maybeLogStreamDiagSummary(fps, backlog);
+}
+
+function maybeLogStreamDiagSummary(fps, backlog) {
+    if (!StreamDiag.enabled()) return;
+    const now = Date.now();
+    if (now - lastStreamDiagSummaryAt < 2000) return;
+    lastStreamDiagSummaryAt = now;
+    const rxFps = Math.round(
+        (wsBinaryRxWindowCount + jsonFrameRxWindowCount) / 2
+    );
+    const binaryRxFps = Math.round(wsBinaryRxWindowCount / 2);
+    const rxKb = Math.round(wsBinaryRxWindowBytes / 1024);
+    const warmupMs = Date.now() - (streamDiagSessionStartedAt || 0);
+    if (StreamDiag.enabled() && warmupMs > 10000 && rxFps > 0) {
+        let hint;
+        if (currentCodecMode === "base64") {
+            if (rxFps >= 1 && rxFps <= BASE64_EXPECTED_MAX_FPS + 1) {
+                /* 设计上限约 3–4fps（280ms 节流 + 静止跳帧），属正常 */
+            } else if (rxFps < 1 || fps < 1) {
+                hint =
+                    "Base64 长时间无帧：确认手机在线、已重装 APK；静止屏约 0.5fps 重发属正常。要更顺请切 WebP/H.264";
+            } else {
+                hint =
+                    "Base64 突发帧率异常；要更高帧率可试「流畅」(WebP) 或 HTTPS+H.264";
+            }
+        } else if (
+            rxFps < 5 &&
+            fps < 5 &&
+            isPublicHttpPage() &&
+            getViewerQualityMode() === "quality"
+        ) {
+            hint = "公网 HTTP「清晰」易卡，建议点「流畅」或上 HTTPS";
+        } else if (rxFps < 5 && fps < 5) {
+            hint = "HTTP 仅 WebP；要更顺可上 HTTPS+H.264";
+        }
+        if (hint) {
+            StreamDiag.warn("收帧偏低 rxFps=", rxFps, "显示~", fps, "fps →", hint);
+        }
+    }
+    StreamDiag.log("summary", {
+        displayProfile: getDisplayCaptureProfile(),
+        viewerQuality: getViewerQualityMode(),
+        codecMode: currentCodecMode,
+        serverPingHint: captureProfileHint,
+        rxFormat: lastRxStreamFormat,
+        paintFps: fps,
+        rxFps,
+        jsonRxFps: Math.round(jsonFrameRxWindowCount / 2),
+        binaryRxFps,
+        backlog,
+        coalesced: framesSkippedCoalesce,
+        wsRxKB: Math.round(wsBinaryRxWindowBytes / 1024),
+        decodeInFlight: frameDecodeInFlight,
+        h264Ready: h264DecoderReady,
+        base64ExpectedMaxFps:
+            currentCodecMode === "base64" ? BASE64_EXPECTED_MAX_FPS : undefined,
+    });
+    wsBinaryRxWindowCount = 0;
+    wsBinaryRxWindowBytes = 0;
+    jsonFrameRxWindowCount = 0;
+}
+
+/** 真实待绘积压（非累计丢帧数） */
+function getDisplayBacklog() {
+    let n = 0;
+    if (pendingFrameBlob) n++;
+    if (frameDecodeInFlight) n++;
+    if (pendingH264Decode) n++;
+    if (pendingH264VideoFrame) n++;
+    if (latestWsBinary) n++;
+    return n;
+}
+
+function recordFramePainted() {
+    framesPaintedSession++;
+    const now = Date.now();
+    if (lastPaintFpsAt > 0) {
+        const dt = now - lastPaintFpsAt;
+        if (dt > 0 && dt < 2000) {
+            paintFpsSamples.push(1000 / dt);
+            while (paintFpsSamples.length > 12) paintFpsSamples.shift();
+        }
+    }
+    lastPaintFpsAt = now;
+}
+
+function h264PayloadHasIdr(bytes) {
+    const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let i = 0;
+    while (i + 4 < data.length) {
+        const len =
+            ((data[i] & 0xff) << 24) |
+            ((data[i + 1] & 0xff) << 16) |
+            ((data[i + 2] & 0xff) << 8) |
+            (data[i + 3] & 0xff);
+        if (len <= 0 || i + 4 + len > data.length) break;
+        if ((data[i + 4] & 0x1f) === 5) return true;
+        i += 4 + len;
+    }
+    let k = 0;
+    while (k + 3 < data.length) {
+        let sc = 0;
+        if (data[k] === 0 && data[k + 1] === 0) {
+            if (data[k + 2] === 1) sc = 3;
+            else if (k + 3 < data.length && data[k + 2] === 0 && data[k + 3] === 1) sc = 4;
+        }
+        if (sc === 0) {
+            k++;
+            continue;
+        }
+        const nal = k + sc;
+        if (nal < data.length && (data[nal] & 0x1f) === 5) return true;
+        k = nal + 1;
+    }
+    return false;
+}
+
+function decodeH264Chunk(frameType, payload) {
+    if (!h264DecoderReady || !h264Decoder) return;
+    try {
+        const avcc = annexBToAvcc(payload);
+        const isKey =
+            frameType === H264_FRAME_KEY ||
+            frameType === H264_FRAME_CONFIG ||
+            h264PayloadHasIdr(avcc);
+        h264ChunkTimestampUs += 66666;
+        const chunk = new EncodedVideoChunk({
+            type: isKey ? "key" : "delta",
+            timestamp: h264ChunkTimestampUs,
+            data: avcc,
+        });
+        if (h264Decoder.state === "configured") {
+            h264Decoder.decode(chunk);
+        }
+    } catch (e) {
+        console.warn("[h264] chunk decode failed", e);
+    }
+}
+
+/** 只解码最新一帧，避免 H.264 积压导致画面与控制反馈落后 1～2 秒 */
+function queueH264Chunk(frameType, payload) {
+    if (!canUseWebCodecsH264() || !h264DecoderReady || !h264Decoder) return;
+
+    if (frameType === H264_FRAME_CONFIG) {
+        const cfg = parseH264ConfigPayload(payload);
+        if (cfg) ensureH264Decoder(cfg.sps, cfg.pps);
+        return;
+    }
+
+    pendingH264Decode = { frameType, payload };
+    if (h264DecodeFlushScheduled) return;
+    h264DecodeFlushScheduled = true;
+    const run = () => {
+        h264DecodeFlushScheduled = false;
+        const job = pendingH264Decode;
+        pendingH264Decode = null;
+        if (job) decodeH264Chunk(job.frameType, job.payload);
+    };
+    if (typeof queueMicrotask === "function") {
+        queueMicrotask(run);
+    } else {
+        Promise.resolve().then(run);
+    }
+}
+
+function initDeviceFrameCanvas() {
+    if (!deviceCanvas) return;
+    frameCanvasCtx = deviceCanvas.getContext("2d", {
+        alpha: false,
+        desynchronized: true,
+    });
+}
+
+/** 赋值 canvas.width/height 会清空位图；仅在实际尺寸变化超过阈值时重置，避免 1px 抖动闪黑 */
+const CANVAS_BACKING_HYSTERESIS_PX = 2;
+
+function getCanvasClientSize() {
+    if (!deviceCanvas) return { cw: 1, ch: 1 };
+    const rect = deviceCanvas.getBoundingClientRect();
+    return {
+        cw: Math.max(1, Math.floor(rect.width)),
+        ch: Math.max(1, Math.floor(rect.height)),
+    };
+}
+
+function ensureCanvasBackingStore(cw, ch) {
+    const pw = deviceCanvas.width;
+    const ph = deviceCanvas.height;
+    const needResize =
+        pw < 1 ||
+        ph < 1 ||
+        Math.abs(pw - cw) >= CANVAS_BACKING_HYSTERESIS_PX ||
+        Math.abs(ph - ch) >= CANVAS_BACKING_HYSTERESIS_PX;
+    if (!needResize) {
+        return { cw: pw, ch: ph, resized: false };
+    }
+    deviceCanvas.width = cw;
+    deviceCanvas.height = ch;
+    lastCanvasPaintW = 0;
+    lastCanvasPaintH = 0;
+    return { cw, ch, resized: true };
+}
+
+function fillCanvasLetterboxIfNeeded(cw, ch) {
+    if (!frameCanvasCtx) return;
+    if (lastCanvasPaintW === cw && lastCanvasPaintH === ch) return;
+    frameCanvasCtx.fillStyle = "#0a0a0a";
+    frameCanvasCtx.fillRect(0, 0, cw, ch);
+    lastCanvasPaintW = cw;
+    lastCanvasPaintH = ch;
+}
+
+function computeLetterboxDest(bw, bh, cw, ch) {
+    const scale = Math.min(cw / bw, ch / bh);
+    const dw = bw * scale;
+    const dh = bh * scale;
+    const dx = (cw - dw) / 2;
+    const dy = (ch - dh) / 2;
+    return { dx, dy, dw, dh };
+}
+
+/** 将位图/视频帧绘制到 Canvas（不每帧 clearRect） */
+function drawSourceLetterboxed(imageSource, bw, bh) {
+    if (!deviceCanvas || !frameCanvasCtx || bw < 1 || bh < 1) return false;
+    let { cw, ch } = getCanvasClientSize();
+    if (cw < 2 || ch < 2) return false;
+    ({ cw, ch } = ensureCanvasBackingStore(cw, ch));
+    const { dx, dy, dw, dh } = computeLetterboxDest(bw, bh, cw, ch);
+    fillCanvasLetterboxIfNeeded(cw, ch);
+    frameCanvasCtx.drawImage(imageSource, 0, 0, bw, bh, dx, dy, dw, dh);
+    lastFrameContentRect = { dx, dy, dw, dh, cw, ch };
+    refreshVisibleImageRect();
+    return true;
+}
+
+function waitNextPaintFrame() {
+    if (typeof requestAnimationFrame !== "function") {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function releaseFrameBitmap() {
+    if (latestFrameBitmap) {
+        latestFrameBitmap.close();
+        latestFrameBitmap = null;
+    }
+    if (h264Decoder) {
+        try {
+            h264Decoder.close();
+        } catch (_) {
+            /* ignore */
+        }
+        h264Decoder = null;
+        h264DecoderReady = false;
+        h264ConfigReceived = false;
+        updateCaptureStatusDisplay();
+    }
+}
+
+let startX = 0;
+let startY = 0;
+let swipeTrailStartClient = null;
+
+let startOffsetPoint = null;
+let lastVisibleImageRect = null;
+
+let currentControlMode = "click";
+
+function refreshVisibleImageRect() {
+    if (!deviceImage) return;
+    lastVisibleImageRect = deviceImage.getBoundingClientRect();
+    if (usesBase64ImgDisplay()) {
+        updateBase64ContentRect();
+    }
+}
+
+/** Base64 img 模式：在 viewerFrame 坐标系下计算 letterbox 内容区（供滑动/点击换算） */
+function updateBase64ContentRect() {
+    if (!usesBase64ImgDisplay() || !viewerFrame || !deviceImage) {
+        return;
+    }
+    const frameRect = viewerFrame.getBoundingClientRect();
+    const imgRect = deviceImage.getBoundingClientRect();
+    const nw = deviceImage.naturalWidth || 0;
+    const nh = deviceImage.naturalHeight || 0;
+    if (nw < 1 || nh < 1 || frameRect.width < 8 || imgRect.width < 4) {
+        return;
+    }
+    const scale = Math.min(imgRect.width / nw, imgRect.height / nh);
+    const dw = nw * scale;
+    const dh = nh * scale;
+    const dx = imgRect.left - frameRect.left + (imgRect.width - dw) / 2;
+    const dy = imgRect.top - frameRect.top + (imgRect.height - dh) / 2;
+    lastFrameContentRect = {
+        dx,
+        dy,
+        dw,
+        dh,
+        cw: frameRect.width,
+        ch: frameRect.height,
+    };
+}
+
+/** Base64 已改 Canvas 单缓冲绘制，不再使用双 img（避免切换 visibility 闪黑） */
+function usesBase64ImgDisplay() {
+    return false;
+}
+
+function updateCodecDisplayLayer() {
+    if (deviceFrameStack) {
+        deviceFrameStack.classList.remove("device-frame-stack--base64-img");
+    }
+    deviceImage = deviceCanvas || deviceImageA;
+    if (!frameCanvasCtx && deviceCanvas) {
+        initDeviceFrameCanvas();
+    }
+}
+
+function noteBase64FramePainted() {
+    lastFramePaintAt = Date.now();
+    recordFramePainted();
+    lastRxStreamFormat = "jpeg";
+    clearCaptureBootstrapRetry();
+    updateCaptureStatusDisplay();
+}
+
+function base64FrameFingerprint(src) {
+    if (!src) return "";
+    if (src.length < 256) return String(src.length);
+    const mid = src.charCodeAt(200) ^ src.charCodeAt(Math.floor(src.length * 0.5));
+    const tail = src.charCodeAt(src.length - 80);
+    return `${src.length}:${mid}:${tail}`;
+}
+
+function revokeLastBase64ObjectUrl() {
+    if (lastBase64ObjectUrl) {
+        URL.revokeObjectURL(lastBase64ObjectUrl);
+        lastBase64ObjectUrl = null;
+    }
+}
+
+/** Base64 模式：合并收帧 + 限频上屏（避免操作后连闪） */
+function queueBase64DeviceFrame(src) {
+    if (!usesBase64ImgDisplay()) return;
+    jsonFrameRxWindowCount++;
+    pendingBase64FrameSrc = src;
+    if (base64PaintCoalesceTimer) return;
+    const elapsed = Date.now() - lastBase64PaintAt;
+    const wait = Math.max(0, BASE64_MIN_PAINT_MS - elapsed);
+    base64PaintCoalesceTimer = setTimeout(() => {
+        base64PaintCoalesceTimer = null;
+        const next = pendingBase64FrameSrc;
+        pendingBase64FrameSrc = null;
+        if (!next) return;
+        if (base64BackLoading) {
+            pendingBase64FrameSrc = next;
+            queueBase64DeviceFrame(next);
+            return;
+        }
+        applyBase64DeviceFrame(next);
+    }, wait);
+}
+
+/** 双 img 乒乓缓冲：新帧在隐藏层解码，完成后再切换，避免改可见层 src 时闪黑 */
+function applyBase64DeviceFrame(src) {
+    let visible = base64FrontEl || deviceImageA;
+    let back = base64BackEl || deviceImageB;
+    if (!visible || !back) return;
+
+    const fp = base64FrameFingerprint(src);
+    if (fp && fp === lastBase64DisplayFp) return;
+    lastBase64DisplayFp = fp;
+
+    deviceImage = visible;
+
+    const afterPaint = (shownEl) => {
+        base64BackLoading = false;
+        lastBase64PaintAt = Date.now();
+        updateBase64ContentRect();
+        refreshVisibleImageRect();
+        noteBase64FramePainted();
+        if (StreamDiag.enabled() && framesPaintedSession <= 5) {
+            StreamDiag.log(
+                "base64 img 显示",
+                shownEl.naturalWidth,
+                "x",
+                shownEl.naturalHeight
+            );
+        }
+        if (pendingBase64FrameSrc) {
+            const queued = pendingBase64FrameSrc;
+            pendingBase64FrameSrc = null;
+            applyBase64DeviceFrame(queued);
+        }
+    };
+
+    const swapVisibleBack = () => {
+        visible.classList.remove("device-frame-img--visible");
+        visible.classList.add("device-frame-img--hidden");
+        back.classList.remove("device-frame-img--hidden");
+        back.classList.add("device-frame-img--visible");
+        base64BackEl = visible;
+        base64FrontEl = back;
+        deviceImage = base64FrontEl;
+        afterPaint(back);
+    };
+
+    if (!visible.src || visible.naturalWidth < 1) {
+        base64BackLoading = true;
+        visible.onload = () => {
+            visible.onload = null;
+            visible.onerror = null;
+            afterPaint(visible);
+        };
+        visible.onerror = () => {
+            base64BackLoading = false;
+            StreamDiag.warn("base64 首帧 img 加载失败");
+        };
+        visible.src = src;
+        return;
+    }
+
+    if (base64BackLoading) {
+        pendingBase64FrameSrc = src;
+        return;
+    }
+
+    if (back.src === src && back.complete && back.naturalWidth > 0) {
+        swapVisibleBack();
+        return;
+    }
+
+    base64BackLoading = true;
+    back.onload = () => {
+        back.onload = null;
+        back.onerror = null;
+        swapVisibleBack();
+    };
+    back.onerror = () => {
+        back.onload = null;
+        back.onerror = null;
+        base64BackLoading = false;
+        StreamDiag.warn("base64 背层 img 加载失败");
+        if (pendingBase64FrameSrc) {
+            const queued = pendingBase64FrameSrc;
+            pendingBase64FrameSrc = null;
+            applyBase64DeviceFrame(queued);
+        }
+    };
+    back.src = src;
+}
+
+function deliverBase64JpegFrame(bytes) {
+    if (currentCodecMode !== "base64") return false;
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    jsonFrameRxWindowCount++;
+    markDeviceOnlineFromStream("base64_binary");
+    queueDeviceFrameBlob(jpegBytesToBlob(view));
+    return true;
+}
+
+function isDeviceImageTarget(target) {
+    return deviceFrameStack && target && deviceFrameStack.contains(target);
+}
+
+/** 顶部退出 / 模式切换等控件，不参与点击、滑动坐标换算 */
+function isControlChromeTarget(target) {
+    if (!target) return false;
+    if (btnCloseExpanded && (target === btnCloseExpanded || btnCloseExpanded.contains(target))) {
+        return true;
+    }
+    const modeBar = document.querySelector(".mode-toggle-bar");
+    if (modeBar && (target === modeBar || modeBar.contains(target))) {
+        return true;
+    }
+    return false;
+}
+
+function stopControlEvent(e) {
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === "function") {
+        e.stopImmediatePropagation();
+    }
+}
+
+function exitExpandedControl() {
+    isExpanded = false;
+    pointerDown = false;
+    isLongPressed = false;
+    ignoreNextClick = false;
+    ignoreNextClickFromPress = false;
+    clearTimeout(touchTimer);
+    viewerFrame.classList.remove("expanded");
+    viewerTips.innerHTML = "点击画面放大控制";
+    syncTouchLayers();
+    clearSwipeTrail();
+    endSwipeCaptureSlowdown();
+    // 控制页 Base64 保持 high，退出全屏不再降回 4s 一帧
+}
+
+function syncTouchLayers() {
+    if (!swipeOverlay || !deviceFrameStack) return;
+    const swipeActive = isExpanded && currentControlMode === "swipe";
+    swipeOverlay.classList.toggle("swipe-touch-overlay--active", swipeActive);
+    deviceFrameStack.classList.toggle("device-frame-stack--display-only", swipeActive);
+}
+
+function clearSwipeTrail() {
+    if (!swipeTrailCanvas) return;
+    const ctx = swipeTrailCanvas.getContext("2d");
+    if (!ctx) return;
+    const rect = swipeOverlay.getBoundingClientRect();
+    swipeTrailCanvas.width = rect.width;
+    swipeTrailCanvas.height = rect.height;
+    ctx.clearRect(0, 0, rect.width, rect.height);
+}
+
+function drawSwipeTrail(clientX1, clientY1, clientX2, clientY2) {
+    if (!swipeTrailCanvas || !swipeOverlay) return;
+    const rect = swipeOverlay.getBoundingClientRect();
+    swipeTrailCanvas.width = rect.width;
+    swipeTrailCanvas.height = rect.height;
+    const ctx = swipeTrailCanvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    ctx.strokeStyle = "rgba(59, 130, 246, 0.92)";
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(clientX1 - rect.left, clientY1 - rect.top);
+    ctx.lineTo(clientX2 - rect.left, clientY2 - rect.top);
+    ctx.stroke();
+}
+
+function flushPendingFrameBlob() {
+    frameRafScheduled = false;
+    const next = pendingFrameBlob;
+    pendingFrameBlob = null;
+    if (next) void paintDeviceFrameBlob(next);
+}
+
+function getDecodeResizeWidth() {
+    if (!deviceCanvas) return undefined;
+    const rect = deviceCanvas.getBoundingClientRect();
+    const w = Math.floor(rect.width);
+    if (w < 1) return undefined;
+    const cap = getViewerQualityMode() === "smooth" ? 360 : 640;
+    return Math.min(w, cap);
+}
+
+/** 从协议解析出的 Uint8Array 构造 Blob（避免 subarray 共享底层缓冲导致解码失败） */
+function jpegBytesToBlob(bytes) {
+    const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    return new Blob([view.slice()], { type: "image/jpeg" });
+}
+
+function decodeBlobForPaint(blob, resizeWidth) {
+    if (currentCodecMode === "base64") {
+        return createImageBitmap(blob);
+    }
+    const workerPromise = decodeBlobViaWorker(blob, resizeWidth);
+    if (workerPromise) return workerPromise;
+    return createFrameBitmap(blob);
+}
+
+let frameDecodeWorker = null;
+let frameDecodeWorkerJobId = 0;
+
+function getFrameDecodeWorker() {
+    if (frameDecodeWorker) return frameDecodeWorker;
+    if (typeof Worker === "undefined") return null;
+    try {
+        frameDecodeWorker = new Worker("frame-decode-worker.js");
+    } catch (e) {
+        console.warn("[frame] Worker 不可用，回退主线程解码", e);
+        return null;
+    }
+    return frameDecodeWorker;
+}
+
+function terminateFrameDecodeWorker() {
+    if (frameDecodeWorker) {
+        frameDecodeWorker.terminate();
+        frameDecodeWorker = null;
+    }
+}
+
+function createFrameBitmap(blob) {
+    const resizeWidth = getDecodeResizeWidth();
+    if (resizeWidth) {
+        try {
+            return createImageBitmap(blob, {
+                resizeWidth,
+                resizeQuality: "low",
+            });
+        } catch (_) {
+            /* 旧版浏览器无 resize 参数 */
+        }
+    }
+    return createImageBitmap(blob);
+}
+
+/** 尽快绘帧：解码进行中只保留最新 blob，避免并行 createImageBitmap 卡死主线程 */
+function queueDeviceFrameBlob(blob) {
+    pendingFrameBlob = blob;
+    if (frameDecodeInFlight) return;
+    if (frameRafScheduled) return;
+    frameRafScheduled = true;
+    if (typeof queueMicrotask === "function") {
+        queueMicrotask(flushPendingFrameBlob);
+    } else {
+        Promise.resolve().then(flushPendingFrameBlob);
+    }
+}
+
+function queueWsBinaryMessage(arrayBuffer) {
+    if (latestWsBinary) framesSkippedCoalesce++;
+    latestWsBinary = arrayBuffer;
+    wsBinaryRxCount++;
+    wsBinaryRxBytes += arrayBuffer.byteLength || 0;
+    wsBinaryRxWindowCount++;
+    wsBinaryRxWindowBytes += arrayBuffer.byteLength || 0;
+    const now = Date.now();
+    const gap = lastWsBinaryRxAt ? now - lastWsBinaryRxAt : 0;
+    lastWsBinaryRxAt = now;
+    if (StreamDiag.enabled() && (wsBinaryRxCount <= 3 || gap > 800)) {
+        StreamDiag.log("ws rx binary", arrayBuffer.byteLength, "B gapMs", gap);
+    }
+    if (StreamDiag.enabled() && getViewerQualityMode() === "smooth") {
+        if (arrayBuffer.byteLength > 20000 && gap > 0 && gap < 800) {
+            StreamDiag.warn(
+                "流畅档大帧",
+                arrayBuffer.byteLength,
+                "B gapMs",
+                gap,
+                "（界面变化过快，手机将自动缩小）"
+            );
+        } else if (arrayBuffer.byteLength > 5000 && gap >= 2000) {
+            StreamDiag.log(
+                "流畅档恢复帧",
+                arrayBuffer.byteLength,
+                "B gapMs",
+                gap,
+                "（静止跳帧后首帧，已修复）"
+            );
+        }
+    }
+    if (wsBinaryRaf) return;
+    const run = () => {
+        wsBinaryRaf = 0;
+        const buf = latestWsBinary;
+        latestWsBinary = null;
+        if (buf) handleBinaryMessage(buf);
+    };
+    // 立即解析解码，不等 vsync 对齐（减少 ~16ms 延迟）
+    if (typeof queueMicrotask === "function") {
+        wsBinaryRaf = 1;
+        queueMicrotask(run);
+    } else {
+        wsBinaryRaf = 1;
+        Promise.resolve().then(run);
+    }
+}
+
+function decodeBlobViaWorker(blob, resizeWidth) {
+    const worker = getFrameDecodeWorker();
+    if (!worker) return null;
+    const jobId = ++frameDecodeWorkerJobId;
+    const timeoutMs = 4000;
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            worker.removeEventListener("message", onMessage);
+            worker.removeEventListener("error", onError);
+            reject(new Error("frame-decode-worker timeout"));
+        }, timeoutMs);
+        const onMessage = (ev) => {
+            if (!ev.data || ev.data.id !== jobId) return;
+            clearTimeout(timer);
+            worker.removeEventListener("message", onMessage);
+            worker.removeEventListener("error", onError);
+            if (ev.data.error) {
+                reject(new Error(ev.data.error));
+                return;
+            }
+            resolve(ev.data.bitmap);
+        };
+        const onError = (err) => {
+            clearTimeout(timer);
+            worker.removeEventListener("message", onMessage);
+            worker.removeEventListener("error", onError);
+            reject(err);
+        };
+        worker.addEventListener("message", onMessage);
+        worker.addEventListener("error", onError);
+        worker.postMessage({ id: jobId, blob, resizeWidth });
+    });
+}
+
+/** Canvas 绘制最新帧（Worker/主线程解码 + 丢弃过期结果） */
+async function paintDeviceFrameBlob(blob) {
+    if (!deviceCanvas) {
+        StreamDiag.warn("paint: deviceCanvas 不存在");
+        return;
+    }
+    if (!frameCanvasCtx) {
+        initDeviceFrameCanvas();
+    }
+    if (!frameCanvasCtx) {
+        StreamDiag.warn("paint: 无法获取 2d 上下文");
+        return;
+    }
+    frameDecodeInFlight = true;
+    let nextBlob = blob;
+    const resizeWidth = getDecodeResizeWidth();
+    try {
+        while (nextBlob) {
+            const generation = ++framePaintGeneration;
+            let bitmap;
+            try {
+                bitmap = await decodeBlobForPaint(nextBlob, resizeWidth);
+            } catch (e) {
+                console.warn("[frame] Canvas 解码失败", e);
+                StreamDiag.warn("Canvas 解码失败", e?.message || e);
+                updateCaptureStatusDisplay();
+                break;
+            }
+            nextBlob = null;
+            if (generation !== framePaintGeneration) {
+                bitmap.close();
+                nextBlob = pendingFrameBlob;
+                pendingFrameBlob = null;
+                if (nextBlob) continue;
+                break;
+            }
+            releaseFrameBitmap();
+            latestFrameBitmap = bitmap;
+
+            const bw = bitmap.width;
+            const bh = bitmap.height;
+            await waitNextPaintFrame();
+            if (generation !== framePaintGeneration) {
+                releaseFrameBitmap();
+                nextBlob = pendingFrameBlob;
+                pendingFrameBlob = null;
+                if (nextBlob) continue;
+                break;
+            }
+            const painted = drawSourceLetterboxed(bitmap, bw, bh);
+            if (!painted) {
+                releaseFrameBitmap();
+                nextBlob = pendingFrameBlob;
+                pendingFrameBlob = null;
+                if (nextBlob) continue;
+                break;
+            }
+            lastFramePaintAt = Date.now();
+            recordFramePainted();
+            markDeviceOnlineFromStream("canvas_paint");
+            clearH264NoFrameFallbackTimer();
+            clearCaptureBootstrapRetry();
+            updateCaptureStatusDisplay();
+            if (StreamDiag.enabled() && framesPaintedSession <= 3) {
+                const { cw, ch } = getCanvasClientSize();
+                StreamDiag.log("paint webp/jpeg", bw, "x", bh, "canvas", cw, "x", ch);
+            }
+
+            nextBlob = pendingFrameBlob;
+            pendingFrameBlob = null;
+            if (nextBlob) continue;
+            break;
+        }
+    } finally {
+        frameDecodeInFlight = false;
+        if (pendingFrameBlob) queueDeviceFrameBlob(pendingFrameBlob);
+    }
+}
+
+/** 最近一帧（全屏切换时重绘） */
+let lastDeviceFrameDataUrl = null;
+let lastDeviceFrameBlob = null;
+
+function base64DataUrlToBlob(dataUrl) {
+    const comma = dataUrl.indexOf(",");
+    const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: "image/jpeg" });
+}
+
+function repaintCachedDeviceFrame() {
+    if (lastDeviceFrameBlob) {
+        queueDeviceFrameBlob(lastDeviceFrameBlob);
+    } else if (lastDeviceFrameDataUrl) {
+        paintBase64Frame(lastDeviceFrameDataUrl);
+    }
+}
+
+/** Base64 JSON 帧：转 Blob 后走 Canvas 单缓冲（与 WebP 相同，不闪黑） */
+function paintBase64Frame(dataUrl) {
+    if (!dataUrl) return;
+    const fp = base64FrameFingerprint(dataUrl);
+    if (fp && fp === lastBase64DisplayFp) return;
+    lastBase64DisplayFp = fp;
+    lastDeviceFrameDataUrl = dataUrl;
+    try {
+        const blob = base64DataUrlToBlob(dataUrl);
+        lastDeviceFrameBlob = blob;
+        jsonFrameRxWindowCount++;
+        queueDeviceFrameBlob(blob);
+        if (StreamDiag.enabled() && framesPaintedSession === 0 && jsonFrameRxWindowCount <= 2) {
+            StreamDiag.log("base64 帧入队", blob.size, "B");
+        }
+    } catch (e) {
+        StreamDiag.warn("base64→blob 失败", e?.message || e);
+    }
+}
+
+function drawImageSourceToCanvas(imageSource) {
+    if (!deviceCanvas || !frameCanvasCtx) {
+        StreamDiag.warn("drawImageSourceToCanvas: canvas 未初始化");
+        return false;
+    }
+    const bw = imageSource.naturalWidth || imageSource.width || 0;
+    const bh = imageSource.naturalHeight || imageSource.height || 0;
+    if (bw < 1 || bh < 1) {
+        StreamDiag.warn("drawImageSourceToCanvas: 图片尺寸无效", bw, bh);
+        return false;
+    }
+    if (!drawSourceLetterboxed(imageSource, bw, bh)) {
+        const { cw, ch } = getCanvasClientSize();
+        StreamDiag.warn("drawImageSourceToCanvas: canvas 尺寸过小", cw, ch);
+        return false;
+    }
+    lastFramePaintAt = Date.now();
+    recordFramePainted();
+    updateCaptureStatusDisplay();
+    if (StreamDiag.enabled() && framesPaintedSession <= 5) {
+        const { cw, ch } = getCanvasClientSize();
+        StreamDiag.log("drawImageSourceToCanvas ok", bw, "x", bh, "canvas", cw, "x", ch);
+    }
+    return true;
+}
+
+function drawBitmapToCanvas(bmp) {
+    if (!bmp) return;
+    if (!deviceCanvas || !frameCanvasCtx) {
+        initDeviceFrameCanvas();
+        if (!deviceCanvas || !frameCanvasCtx) {
+            try {
+                bmp.close();
+            } catch (_) {
+                /* ignore */
+            }
+            return;
+        }
+    }
+    requestAnimationFrame(() => {
+        try {
+            drawImageSourceToCanvas(bmp);
+        } finally {
+            try {
+                bmp.close();
+            } catch (_) {
+                /* ignore */
+            }
+        }
+    });
+}
+
+initDeviceFrameCanvas();
+updateCodecDisplayLayer();
+if (deviceImageA) {
+    deviceImageA.decoding = "async";
+    deviceImageA.addEventListener("load", refreshVisibleImageRect);
+}
+if (deviceImageB) {
+    deviceImageB.decoding = "async";
+    deviceImageB.addEventListener("load", refreshVisibleImageRect);
+}
+initViewerQualityBar();
+updateCodecModeButtons();
+updateCaptureStatusDisplay("");
+if (StreamDiag.enabled()) {
+    console.info(
+        "[StreamDiag] 诊断已开启：每 2s 输出 summary；关闭请执行 localStorage.removeItem('streamDiag') 并刷新"
+    );
+} else {
+    console.info(
+        "[StreamDiag] 开启诊断：地址加 ?diag=1 或控制台执行 localStorage.setItem('streamDiag','1'); location.reload()"
+    );
+}
+
+window.addEventListener("resize", () => {
+    refreshVisibleImageRect();
+    if (latestFrameBitmap && frameCanvasCtx) {
+        drawSourceLetterboxed(
+            latestFrameBitmap,
+            latestFrameBitmap.width,
+            latestFrameBitmap.height
+        );
+    }
+    if (swipeOverlay?.classList.contains("swipe-touch-overlay--active")) {
+        clearSwipeTrail();
+    }
+});
+
+/* ================= websocket ================= */
+
+function getWebSocketBaseUrl() {
+    if (typeof WsDebug !== "undefined") {
+        return WsDebug.resolveWsEndpoint();
+    }
+    return `${window.location.origin.replace(/^http/, "ws")}/ws`;
+}
+
+/** 局域网/本机（可走 H.264 或低延迟 WebP） */
+function isPrivateLanHost(hostname) {
+    if (!hostname || hostname === "localhost" || hostname === "127.0.0.1") {
+        return true;
+    }
+    if (/^192\.168\./.test(hostname)) return true;
+    if (/^10\./.test(hostname)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+    return false;
+}
+
+/** 公网 IP + HTTP：浏览器禁止 WebCodecs，只能 WebP */
+function isPublicHttpPage() {
+    if (window.CodecClient && CodecClient.isPublicHttpPage) {
+        return CodecClient.isPublicHttpPage();
+    }
+    return location.protocol === "http:" && !isPrivateLanHost(location.hostname);
+}
+
+function pickCaptureSpeedForSession() {
+    return captureElevated ? "high" : "low";
+}
+
+function clearControlIdleTimer() {
+    if (controlIdleLowTimer) {
+        clearTimeout(controlIdleLowTimer);
+        controlIdleLowTimer = null;
+    }
+}
+
+function scheduleControlIdleTimer() {
+    clearControlIdleTimer();
+    if (!controlSessionActive || !captureElevated) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+    }
+    controlIdleLowTimer = setTimeout(() => {
+        controlIdleLowTimer = null;
+        if (!controlSessionActive || !captureElevated) return;
+        StreamDiag.log("控制页 30s 无操作 → low");
+        releaseControlCaptureToLow();
+    }, CONTROL_IDLE_LOW_MS);
+}
+
+/** 用户操作后刷新 idle 计时；若已降档则重新拉高 */
+function bumpControlActivity() {
+    if (!controlSessionActive) return;
+    if (!captureElevated) {
+        elevateControlCapture("user_activity");
+        return;
+    }
+    scheduleControlIdleTimer();
+}
+
+/** 进入控制页：默认高刷 + 启动 30s 无操作降档计时 */
+function elevateControlCapture(reason) {
+    captureElevated = true;
+    clearControlIdleTimer();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+    if (now - lastElevateControlSentAt < ELEVATE_CONTROL_COALESCE_MS) {
+        scheduleControlIdleTimer();
+        if (StreamDiag.enabled() && reason) {
+            StreamDiag.log("控制页高刷(跳过重复)", reason);
+        }
+        return;
+    }
+    lastElevateControlSentAt = now;
+    sendControl({ type: "resumeCapture" }, { skipFeedback: true });
+    if (currentCodecMode === "base64") {
+        sendControl({ type: "setCodecMode", mode: "base64" }, { skipFeedback: true });
+    } else {
+        sendControl({ type: "preferWebp" }, { skipFeedback: true });
+        sendControl({ type: "setCodecMode", mode: "webp" }, { skipFeedback: true });
+    }
+    sendControl({ type: "setCaptureSpeed", speed: "high" }, { skipFeedback: true });
+    if (currentCodecMode !== "base64") {
+        sendControl({ type: "requestFrame" }, { skipFeedback: true });
+    }
+    captureProfileHint = "high";
+    captureSessionPrewarmed = true;
+    updateCaptureStatusDisplay("high");
+    scheduleControlIdleTimer();
+    if (StreamDiag.enabled() && reason) {
+        StreamDiag.log("控制页高刷", reason);
+    }
+}
+
+/** 兼容旧调用名 */
+function primeControlCapture() {
+    elevateControlCapture("prime");
+}
+
+/** 离开控制页 / 无操作超时：降回 low（仍保持采集，供列表预览等） */
+function releaseControlCaptureToLow() {
+    captureElevated = false;
+    lastElevateControlSentAt = 0;
+    clearControlIdleTimer();
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    sendControl({ type: "resumeCapture" }, { skipFeedback: true });
+    sendControl({ type: "setCaptureSpeed", speed: "low" }, { skipFeedback: true });
+    captureProfileHint = "low";
+    updateCaptureStatusDisplay("low");
+    StreamDiag.log("控制页降档 low");
+}
+
+function connectWebSocket() {
+
+    const url = new URL(getWebSocketBaseUrl());
+
+    url.searchParams.set("clientType", "web");
+    url.searchParams.set(
+        "deviceId",
+        deviceId
+    );
+    if (token) {
+        url.searchParams.set("token", token);
+    }
+
+    ws = new WebSocket(url.toString());
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
+        console.log("[WS] 已连接");
+        controlWsConnected = true;
+        streamDiagSessionStartedAt = Date.now();
+        wsReconnectAttempt = 0;
+        updateWsLinkStatus("connected");
+        scheduleDeviceMetaRefresh();
+        try {
+            ws.send(
+                JSON.stringify({
+                    type: "subscribe_control",
+                    deviceId: String(deviceId),
+                })
+            );
+            StreamDiag.log("subscribe_control 已发送", deviceId);
+        } catch (e) {
+            StreamDiag.warn("subscribe_control 发送失败", e.message);
+        }
+        try {
+            bootstrapCaptureSession();
+        } catch (e) {
+            console.warn("[WS] 初始化采集策略失败", e.message);
+        }
+        void refreshDeviceMetaFromServer();
+    };
+
+
+    ws.onmessage = (e) => {
+        if (e.data instanceof ArrayBuffer) {
+            queueWsBinaryMessage(e.data);
+            return;
+        }
+        if (typeof e.data !== "string") {
+            return;
+        }
+        try {
+            handleMessage(JSON.parse(e.data));
+        } catch (err) {
+            console.warn(err);
+        }
+    };
+
+    ws.onclose = () => {
+        controlWsConnected = false;
+        if (deviceInfo) renderDevice(deviceInfo);
+        if (!controlSessionActive) return;
+        updateWsLinkStatus("reconnecting");
+        if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+        wsReconnectAttempt += 1;
+        const delay = Math.min(1000 * Math.pow(2, wsReconnectAttempt - 1), 30000);
+        wsReconnectTimer = setTimeout(connectWebSocket, delay);
+    };
+}
+
+function updateWsLinkStatus(state) {
+    if (!viewerTips) return;
+    if (state === "connected") {
+        if (!isExpanded) {
+            viewerTips.textContent = "点击画面放大控制";
+        }
+        return;
+    }
+    if (state === "reconnecting") {
+        viewerTips.innerHTML = `🔴 控制通道断开，${wsReconnectAttempt > 0 ? `第 ${wsReconnectAttempt} 次` : ""}重连中…`;
+    }
+}
+
+/** 离开控制页时恢复从机投屏，避免长期处于 pause 状态 */
+function resumeSyncGroupFollowersCapture() {
+    if (syncGroupDeviceIds.length < 2) return;
+    syncGroupDeviceIds
+        .filter((id) => String(id) !== String(deviceId))
+        .forEach((id) => {
+            sendControlToDevice(id, { type: "resumeCapture" }, { skipFeedback: true });
+        });
+}
+
+/** 退出控制页：降回 low（不 pause，便于列表/重连仍可取帧） */
+function releaseControlCapture() {
+    releaseControlCaptureToLow();
+    if (syncGroupDeviceIds.length >= 2) {
+        syncGroupDeviceIds
+            .filter((id) => String(id) !== String(deviceId))
+            .forEach((id) => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    sendControlToDevice(
+                        id,
+                        { type: "setCaptureSpeed", speed: "low" },
+                        { skipFeedback: true }
+                    );
+                }
+            });
+    }
+}
+
+function teardownControlSession() {
+    if (!controlSessionActive) return;
+    clearControlIdleTimer();
+    deviceStreamOnline = false;
+    deviceForceOffline = false;
+    lastDeviceFrameRxAt = 0;
+    controlWsConnected = false;
+    clearDeviceMetaRefreshTimer();
+    captureElevated = false;
+    controlSessionActive = false;
+    codecPreferenceSynced = false;
+    terminateFrameDecodeWorker();
+    clearH264NoFrameFallbackTimer();
+    webpFallbackRequested = false;
+    captureSessionPrewarmed = false;
+    pendingH264Decode = null;
+    h264DecodeFlushScheduled = false;
+    skipStaleDisplayFrames();
+    if (wsBinaryRaf && typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(wsBinaryRaf);
+    }
+    wsBinaryRaf = 0;
+    framesSkippedCoalesce = 0;
+    paintFpsSamples.length = 0;
+    if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+    }
+    clearCaptureBootstrapRetry();
+    if (base64PaintCoalesceTimer) {
+        clearTimeout(base64PaintCoalesceTimer);
+        base64PaintCoalesceTimer = null;
+    }
+    if (visibilityLowTimer) {
+        clearTimeout(visibilityLowTimer);
+        visibilityLowTimer = null;
+    }
+    revokeLastBase64ObjectUrl();
+    try {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            releaseControlCapture();
+        }
+    } catch (e) {
+        console.warn("[control] releaseCapture failed", e.message);
+    }
+    if (ws) {
+        const sock = ws;
+        ws = null;
+        sock.onclose = null;
+        sock.onopen = null;
+        sock.onmessage = null;
+        if (sock.readyState === WebSocket.OPEN || sock.readyState === WebSocket.CONNECTING) {
+            try {
+                sock.close(1000, "control_page_leave");
+            } catch (_) {
+                /* ignore */
+            }
+        }
+    }
+}
+
+function handleBinaryMessage(arrayBuffer) {
+    const parsed = parseWebFramePacket(new Uint8Array(arrayBuffer));
+    if (currentCodecMode === "base64") {
+        if (!parsed) {
+            if (StreamDiag.enabled() && wsBinaryRxCount <= 5) {
+                StreamDiag.warn("base64 二进制帧解析失败", arrayBuffer.byteLength);
+            }
+            return;
+        }
+        if (String(parsed.deviceId) !== String(deviceId)) return;
+        const raw = parsed.imageData;
+        if (!raw || !raw.length) return;
+        const isJpeg =
+            parsed.format === IMAGE_FORMAT_JPEG ||
+            parsed.format === 0x00 ||
+            parsed.mimeType === "image/jpeg";
+        if (!isJpeg) return;
+        wsBinaryRxWindowBytes += raw.length;
+        if (deliverBase64JpegFrame(raw)) return;
+    }
+    if (!parsed) return;
+    if (String(parsed.deviceId) !== String(deviceId)) return;
+
+    const raw = parsed.imageData;
+    if (StreamDiag.enabled() && wsBinaryRxCount <= 5) {
+        StreamDiag.log("frame parsed format=", parsed.format, "bytes=", raw.length);
+    }
+    const rxH264 =
+        parsed.format === IMAGE_FORMAT_H264 || parsed.format === 0x03;
+    if (rxH264 && raw.length > 1) {
+        if (!canUseWebCodecsH264()) {
+            lastRxStreamFormat = "h264";
+            forcePreferWebp(getWebCodecsBlockReason() || "HTTP 无法解码 H.264", {
+                allowRepeat: true,
+                updateTips: false,
+            });
+            // 持续收到 H.264 时反复通知手机切换，直到生效
+            if (wsBinaryRxCount % 3 === 0) {
+                sendControl({ type: "preferWebp" }, { skipFeedback: true });
+            }
+            updateCaptureStatusDisplay();
+            return;
+        }
+        lastRxStreamFormat = "h264";
+        const frameType = raw[0];
+        const payload = raw.subarray(1);
+        if (frameType === H264_FRAME_CONFIG) {
+            h264ConfigReceived = true;
+            const cfg = parseH264ConfigPayload(payload);
+            if (cfg) {
+                ensureH264Decoder(cfg.sps, cfg.pps).then((ok) => {
+                    if (!ok) return;
+                    scheduleH264NoFrameFallback();
+                });
+            } else {
+                updateCaptureStatusDisplay();
+                requestWebpFallback("H.264 CONFIG 无效");
+            }
+            return;
+        }
+        updateCaptureStatusDisplay();
+        if (h264DecoderReady) {
+            queueH264Chunk(frameType, payload);
+            if (!lastFramePaintAt) {
+                scheduleH264NoFrameFallback();
+            }
+        } else {
+            scheduleH264NoFrameFallback();
+        }
+        return;
+    }
+
+    clearH264NoFrameFallbackTimer();
+
+    lastRxStreamFormat =
+        parsed.format === IMAGE_FORMAT_WEBP || parsed.mimeType === "image/webp"
+            ? "webp"
+            : "jpeg";
+    updateCaptureStatusDisplay();
+    const blob =
+        parsed.mimeType === "image/jpeg" || parsed.format === IMAGE_FORMAT_JPEG
+            ? jpegBytesToBlob(raw)
+            : new Blob([raw.slice ? raw.slice() : raw], {
+                  type: parsed.mimeType || "image/jpeg",
+              });
+    markDeviceOnlineFromStream("ws_binary");
+    queueDeviceFrameBlob(blob);
+}
+
+function captureModeLabel(profile) {
+    if (!profile) return "";
+    if (currentCodecMode === "base64") return "画质：Base64 (JPEG·JSON)";
+    const p = String(profile).toLowerCase();
+    if (p === "smooth") return "画质：流畅 (WebP·低带宽)";
+    if (p === "high") return "画质：清晰 (WebP/H.264·高刷)";
+    if (p === "thumb") return "画质：列表缩略图 (thumb·约1fps，异常)";
+    if (p === "medium" || p === "mid") return "画质：均衡 (medium)";
+    if (p === "low") return "画质：节省 (low)";
+    return `画质：${profile}`;
+}
+
+function handleMessage(msg) {
+
+    if (msg.type === "device_ui_nodes" || msg.type === "ui_nodes") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (String(incomingId) !== String(deviceId)) return;
+        if (uiNodeModal) uiNodeModal.classList.remove("hidden");
+        if (typeof UiInspector !== "undefined" && UiInspector.open) {
+            UiInspector.open(msg);
+        } else {
+            const nodes = msg.nodes || msg.data || msg.payload || msg.raw || msg;
+            if (uiNodeStatus) uiNodeStatus.textContent = "已获取节点信息";
+            if (uiNodeData) {
+                uiNodeData.textContent =
+                    typeof nodes === "string" ? nodes : JSON.stringify(nodes, null, 2);
+            }
+        }
+        return;
+    }
+
+    if (msg.type === "device_ui_nodes_error" || msg.type === "ui_nodes_error") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (String(incomingId) !== String(deviceId)) return;
+        if (uiNodeModal) uiNodeModal.classList.remove("hidden");
+        if (typeof UiInspector !== "undefined" && UiInspector.showError) {
+            UiInspector.showError(msg);
+        } else {
+            if (uiNodeStatus) uiNodeStatus.textContent = msg.error || msg.message || "获取节点信息失败";
+            if (uiNodeData) uiNodeData.textContent = JSON.stringify(msg, null, 2);
+        }
+        return;
+    }
+
+    if (msg.type === "device_frame") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (String(incomingId) !== String(deviceId)) return;
+        let img = msg.image;
+        if (!img) return;
+        img = img.replace(/[\r\n\s]/g, "");
+        const dataUrl = img.startsWith("data:image") ? img : `data:image/jpeg;base64,${img}`;
+        lastRxStreamFormat = "jpeg";
+        wsBinaryRxWindowBytes += dataUrl.length;
+        const reportedSpeed =
+            msg.speed ||
+            msg.captureSpeed ||
+            msg.capture_speed ||
+            (msg.command && (msg.command.speed || msg.command.captureSpeed));
+        if (reportedSpeed && reportedSpeed !== captureProfileHint) {
+            captureProfileHint = reportedSpeed;
+            updateCaptureStatusDisplay(reportedSpeed);
+        } else {
+            const now = Date.now();
+            if (!lastCaptureStatusPaintAt || now - lastCaptureStatusPaintAt > 800) {
+                lastCaptureStatusPaintAt = now;
+                updateCaptureStatusDisplay();
+            }
+        }
+        markDeviceOnlineFromStream("device_frame");
+        paintBase64Frame(dataUrl);
+        return;
+    }
+
+    if (msg.type === "device_registered") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (String(incomingId) !== String(deviceId)) return;
+        deviceForceOffline = false;
+        deviceStreamOnline = true;
+        const d = msg.device || msg;
+        renderDevice({
+            ...(deviceInfo || {}),
+            ...d,
+            deviceId: d.deviceId || d.device_id || deviceId,
+            online: true,
+        });
+        return;
+    }
+
+    // 单独的速率上报消息处理
+    if (msg.type === "subscribe_control_ack") {
+        StreamDiag.log("subscribe_control_ack", msg.captureProfile || msg.deviceId);
+        if (!captureElevated || Date.now() - lastElevateControlSentAt >= ELEVATE_CONTROL_COALESCE_MS) {
+            primeControlCapture();
+        } else {
+            StreamDiag.log("subscribe_control_ack 已预热，跳过高刷");
+        }
+        return;
+    }
+
+    if (msg.type === "device_ping") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (incomingId && String(incomingId) !== String(deviceId)) return;
+        markDeviceOnlineFromStream("device_ping");
+
+        const sp = msg.captureProfile || msg.captureSpeed;
+        if (!sp || !captureModeLabel(sp)) return;
+
+        if (!isServerProfileDowngrade(sp)) {
+            StreamDiag.log("device_ping captureProfile=", sp);
+        }
+
+        if (
+            isServerProfileDowngrade(sp) &&
+            controlSessionActive &&
+            captureElevated &&
+            ws &&
+            ws.readyState === 1
+        ) {
+            const speed = pickCaptureSpeedForSession();
+            const now = Date.now();
+            if (!controlPingReassertAt || now - controlPingReassertAt > 5000) {
+                controlPingReassertAt = now;
+                StreamDiag.warn("服务端建议", sp, "→ 重发 setCaptureSpeed", speed);
+                sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+            }
+            updateCaptureStatusDisplay();
+        } else if (captureElevated) {
+            captureProfileHint = "high";
+            updateCaptureStatusDisplay("high");
+        } else {
+            captureProfileHint = sp;
+            updateCaptureStatusDisplay(sp);
+        }
+
+        if (captureSpeedStatus && ws && ws.readyState === 1) {
+            captureSpeedStatus.textContent += " · 通道正常";
+        }
+        return;
+    }
+
+    if (msg.type === 'capture_speed' || msg.type === 'captureSpeed' || msg.type === 'capture_speed_update') {
+        const sp = msg.speed || msg.captureSpeed || msg.capture_speed || (msg.data && msg.data.speed);
+        if (sp) updateCaptureStatusDisplay(sp);
+        return;
+    }
+
+    if (msg.type === "device_display_update") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (String(incomingId) !== String(deviceId)) return;
+        const d = msg.device || msg;
+        if (d.width && d.height) {
+            deviceInfo = { ...(deviceInfo || {}), ...d, width: d.width, height: d.height };
+            renderDevice(deviceInfo);
+            if (viewerTips && isExpanded) {
+                viewerTips.innerHTML = `📐 屏幕已更新 ${d.width}×${d.height}`;
+            }
+        }
+        return;
+    }
+
+    if (msg.type === "device_list") {
+
+        const d = msg.devices.find(i =>
+
+            String(i.device_id) ===
+            String(deviceId)
+
+            ||
+
+            String(i.deviceId) ===
+            String(deviceId)
+        );
+
+        if (d) {
+            if (d.online === true) {
+                deviceForceOffline = false;
+                deviceStreamOnline = true;
+            }
+            renderDevice(d);
+        }
+    }
+
+    if (msg.type === "control_ack") {
+        if (msg.deviceId || msg.deviceIds) {
+            if (viewerTips) viewerTips.innerHTML = formatControlAck(msg);
+        }
+        return;
+    }
+
+    if (msg.type === "device_disconnected") {
+        const incomingId = msg.deviceId || msg.device_id;
+        if (String(incomingId) === String(deviceId)) {
+            markDeviceOfflineFromServer("device_disconnected");
+        }
+        return;
+    }
+}
+
+function markDeviceOfflineFromServer(reason) {
+    deviceForceOffline = true;
+    deviceStreamOnline = false;
+    lastDeviceFrameRxAt = 0;
+    if (deviceInfo) {
+        deviceInfo = { ...deviceInfo, online: false };
+        renderDevice(deviceInfo);
+    }
+    if (viewerTips) {
+        viewerTips.innerHTML = "📵 设备已断开连接，指令将无法执行";
+    }
+    if (StreamDiag.enabled() && reason) {
+        StreamDiag.log("设备状态→离线", reason);
+    }
+}
+
+function resolveDeviceOnline(d) {
+    if (deviceForceOffline) return false;
+    if (d && d.online === false) return false;
+    if (deviceStreamOnline) return true;
+    if (!d) return false;
+    if (d.online === true) return true;
+    const now = Date.now();
+    if (lastDeviceFrameRxAt && now - lastDeviceFrameRxAt < DEVICE_ONLINE_STALE_MS) {
+        return true;
+    }
+    if (lastFramePaintAt && now - lastFramePaintAt < DEVICE_ONLINE_STALE_MS) {
+        return true;
+    }
+    return false;
+}
+
+function markDeviceOnlineFromStream(source) {
+    deviceForceOffline = false;
+    lastDeviceFrameRxAt = Date.now();
+    const wasOffline = !deviceStreamOnline && (!deviceInfo || deviceInfo.online !== true);
+    deviceStreamOnline = true;
+    if (!deviceInfo) {
+        deviceInfo = {
+            deviceId,
+            brand: "-",
+            model: "-",
+            android: "-",
+            width: 1080,
+            height: 2400,
+            online: true,
+        };
+        renderDevice(deviceInfo);
+        return;
+    }
+    if (wasOffline || deviceInfo.online !== true) {
+        deviceInfo = { ...deviceInfo, online: true };
+        renderDevice(deviceInfo);
+        if (StreamDiag.enabled() && source) {
+            StreamDiag.log("设备状态→在线", source);
+        }
+    }
+}
+
+async function refreshDeviceMetaFromServer() {
+    if (!deviceId || !token) return;
+    try {
+        const resp = await fetch(`/api/device/${encodeURIComponent(deviceId)}`, {
+            headers: { "x-admin-token": token },
+            cache: "no-store",
+        });
+        if (!resp.ok) return;
+        const d = await resp.json();
+        if (d.online === true) {
+            deviceForceOffline = false;
+            deviceStreamOnline = true;
+        } else if (d.online === false) {
+            deviceForceOffline = true;
+            deviceStreamOnline = false;
+        }
+        renderDevice({ ...(deviceInfo || {}), ...d });
+    } catch (_) {
+        /* ignore */
+    }
+}
+
+function clearDeviceMetaRefreshTimer() {
+    if (deviceMetaRefreshTimer) {
+        clearInterval(deviceMetaRefreshTimer);
+        deviceMetaRefreshTimer = null;
+    }
+}
+
+/** 定时拉服务端状态，手机静默重连后无需手动刷新页面 */
+function scheduleDeviceMetaRefresh() {
+    clearDeviceMetaRefreshTimer();
+    if (!controlSessionActive) return;
+    deviceMetaRefreshTimer = setInterval(() => {
+        if (!controlSessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+        void refreshDeviceMetaFromServer();
+    }, 12000);
+}
+
+function renderDevice(d) {
+    const merged = { ...(deviceInfo || {}), ...d };
+    merged.online = resolveDeviceOnline(merged);
+    deviceInfo = merged;
+
+    const onlineStatus = merged.online
+        ? `<span style="color:#10b981;font-weight:bold;">● 在线</span>`
+        : `<span style="color:#ef4444;font-weight:bold;">● 离线</span>`;
+
+    const linkOk = controlWsConnected && ws && ws.readyState === WebSocket.OPEN;
+    const linkStatus = linkOk
+        ? `<span style="color:#64748b">控制通道正常</span>`
+        : `<span style="color:#f59e0b;font-weight:bold;">控制通道断开</span>`;
+
+    deviceMeta.innerHTML = `
+        <div>品牌：${merged.brand || "-"}</div>
+        <div>型号：${merged.model || "-"}</div>
+        <div>系统：Android ${merged.android || "-"}</div>
+        <div>分辨率：${merged.width || 1080} × ${merged.height || 2400}${merged.orientation === 2 ? " · 横屏" : merged.orientation === 1 ? " · 竖屏" : ""}</div>
+        <div>设备：${onlineStatus}</div>
+        <div>网页：${linkStatus}</div>
+    `;
+}
+
+function flashControlFeedback() {
+    if (!viewerFrame) return;
+    viewerFrame.classList.add("control-feedback");
+    if (sendControlAnimationTimer) clearTimeout(sendControlAnimationTimer);
+    sendControlAnimationTimer = setTimeout(() => {
+        viewerFrame.classList.remove("control-feedback");
+        sendControlAnimationTimer = null;
+    }, 120);
+}
+
+function sendControlToDevice(targetDeviceId, command, options = {}) {
+    if (!ws || ws.readyState !== 1) return;
+    if (command && shouldSkipStaleDisplayFrames(command)) {
+        skipStaleDisplayFrames();
+    }
+    const payload = {
+        type: "control",
+        deviceId: targetDeviceId,
+        command,
+    };
+    if (StreamDiag.enabled()) {
+        StreamDiag.log("[WS SEND]", payload.type, payload.command?.type || payload.command);
+    }
+    ws.send(JSON.stringify(payload));
+
+    const skipFeedback = options.skipFeedback
+        || command.type === "setCaptureSpeed"
+        || command.type === "pauseCapture"
+        || command.type === "resumeCapture"
+        || (command.type === "swipe" && currentControlMode === "swipe");
+    if (!skipFeedback) {
+        flashControlFeedback();
+    }
+}
+
+function sendControl(command, options = {}) {
+    if (!ws || ws.readyState !== 1) return false;
+    if (command && shouldSkipStaleDisplayFrames(command)) {
+        skipStaleDisplayFrames();
+    }
+    const masterOnly = MASTER_ONLY_COMMANDS.has(command.type);
+    const payload = {
+        type: "control",
+        deviceId,
+        command,
+    };
+    if (!masterOnly && syncGroupDeviceIds.length > 0) {
+        payload.deviceIds = syncGroupDeviceIds;
+    }
+    if (StreamDiag.enabled()) {
+        StreamDiag.log("[WS SEND]", payload.type, payload.command?.type || payload.command);
+    }
+    ws.send(JSON.stringify(payload));
+
+    if (command && INTERACTIVE_CONTROL_TYPES.has(command.type)) {
+        bumpControlActivity();
+    }
+
+    const skipFeedback = options.skipFeedback
+        || command.type === "setCaptureSpeed"
+        || command.type === "pauseCapture"
+        || command.type === "resumeCapture"
+        || (command.type === "swipe" && currentControlMode === "swipe");
+    if (!skipFeedback) {
+        flashControlFeedback();
+    }
+    // Base64：手机端 notifyUserInteraction 已补帧，勿再刷 requestFrame（易连发闪屏）
+    if (
+        command &&
+        INTERACTIVE_CONTROL_TYPES.has(command.type) &&
+        currentCodecMode !== "base64" &&
+        ws &&
+        ws.readyState === 1
+    ) {
+        const now = Date.now();
+        if (now - lastRequestFrameSentAt >= 400) {
+            lastRequestFrameSentAt = now;
+            setTimeout(() => {
+                if (ws && ws.readyState === 1) {
+                    sendControl({ type: "requestFrame" }, { skipFeedback: true });
+                }
+            }, 40);
+        }
+    }
+    return true;
+}
+
+function clearCaptureBootstrapRetryTimer() {
+    if (captureBootstrapRetryTimer) {
+        clearTimeout(captureBootstrapRetryTimer);
+        captureBootstrapRetryTimer = null;
+    }
+}
+
+function clearCaptureBootstrapRetry() {
+    clearCaptureBootstrapRetryTimer();
+    captureBootstrapRetryCount = 0;
+}
+
+function scheduleCaptureBootstrapRetry() {
+    clearCaptureBootstrapRetryTimer();
+    captureBootstrapRetryTimer = setTimeout(() => {
+        captureBootstrapRetryTimer = null;
+        if (!controlSessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+        if (lastFramePaintAt > 0) return;
+        if (
+            (wsBinaryRxCount > 0 || jsonFrameRxWindowCount > 0) &&
+            captureBootstrapRetryCount < CAPTURE_BOOTSTRAP_MAX_RETRIES
+        ) {
+            captureBootstrapRetryCount++;
+            StreamDiag.log(
+                "bootstrap 已收流未出画，延后重试",
+                captureBootstrapRetryCount,
+                "/",
+                CAPTURE_BOOTSTRAP_MAX_RETRIES
+            );
+            scheduleCaptureBootstrapRetry();
+            return;
+        }
+        console.warn("[control] 长时间无画面，重试 resume + 编码 + 档位");
+        sendControl({ type: "resumeCapture" }, { skipFeedback: true });
+        if (currentCodecMode === "base64") {
+            sendControl({ type: "setCodecMode", mode: "base64" }, { skipFeedback: true });
+        } else {
+            syncCaptureCodecPreference({ force: true });
+        }
+        const speed = pickCaptureSpeedForSession();
+        if (syncGroupDeviceIds.length < 2) {
+            sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+        } else {
+            applySyncGroupCapturePolicy();
+        }
+        captureProfileHint = speed;
+        updateCaptureStatusDisplay(speed);
+        if (viewerTips && !isExpanded) {
+            viewerTips.innerHTML =
+                "画面仍未收到，已重试唤醒投屏；请确认手机在线且投屏服务已开启";
+        }
+    }, CAPTURE_BOOTSTRAP_RETRY_MS);
+}
+
+/**
+ * 进入控制页即预拉高帧并选好编码，避免第一次点全屏再等管线切换。
+ * 全屏时仅展开 UI，不再重复 setCaptureSpeed。
+ */
+function bootstrapCaptureSession(options = {}) {
+    const soft = options.soft === true;
+    StreamDiag.log("bootstrap", {
+        soft,
+        codec: currentCodecMode,
+        quality: getViewerQualityMode(),
+        targetSpeed: currentCodecMode === "base64" ? "high" : pickCaptureSpeedForSession(),
+    });
+    if (!soft) {
+        captureSessionPrewarmed = false;
+        webpFallbackRequested = false;
+        lastPreferWebpSentAt = 0;
+        codecPreferenceSynced = false;
+        currentCodecMode = "base64";
+        updateCodecDisplayLayer();
+        updateCodecModeButtons();
+    }
+
+    // 设备详情默认：Base64 + 高刷（仅编码按钮可切 WebP/H.264）
+    if (currentCodecMode === "base64") {
+        updateCodecDisplayLayer();
+        if (!soft && ws && ws.readyState === WebSocket.OPEN) {
+            primeControlCapture();
+        }
+        codecPreferenceSynced = true;
+        return;
+    }
+
+    const speed = pickCaptureSpeedForSession();
+    const isSmooth = getViewerQualityMode() === "smooth";
+    if (!soft && ws && ws.readyState === WebSocket.OPEN) {
+        primeControlCapture();
+    }
+    if (isSmooth) {
+        webpFallbackRequested = true;
+        codecPreferenceSynced = true;
+    } else {
+        syncCaptureCodecPreference({ force: soft });
+    }
+    const applySpeed = () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!isSmooth && !canUseWebCodecsH264()) {
+            syncCaptureCodecPreference({ force: true });
+        }
+        if (syncGroupDeviceIds.length < 2) {
+            sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+            const retrySpeed =
+                !canUseWebCodecsH264() && getViewerQualityMode() !== "smooth";
+            if (retrySpeed) {
+                setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+                    }
+                }, 280);
+            }
+        } else {
+            applySyncGroupCapturePolicy();
+        }
+        captureSessionPrewarmed = true;
+        captureProfileHint = speed;
+        updateCaptureStatusDisplay(speed);
+        if (!soft) scheduleCaptureBootstrapRetry();
+    };
+    const httpQuality =
+        isPublicHttpPage() && getViewerQualityMode() === "quality" && !canUseWebCodecsH264();
+    // 公网 HTTP 清晰模式：必须确保 preferWebp 先到达手机，再发 high
+    // 否则手机会先启动 H.264 编码器（网页无法解码）
+    const delay = isSmooth
+            ? 40
+            : canUseWebCodecsH264()
+              ? 80
+              : httpQuality
+                ? 350
+                : 200;
+    // 公网 HTTP：先多发几次 preferWebp 确保手机收到
+    if (httpQuality && !soft) {
+        sendControl({ type: "preferWebp" }, { skipFeedback: true });
+        setTimeout(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                sendControl({ type: "preferWebp" }, { skipFeedback: true });
+            }
+        }, 100);
+    }
+    setTimeout(applySpeed, soft ? (httpQuality ? 80 : 60) : delay);
+    if (viewerTips && !isExpanded) {
+        if (isPublicHttpPage()) {
+            viewerTips.innerHTML =
+                getViewerQualityMode() === "quality"
+                    ? "公网 HTTP「清晰」约 8～15fps；要更顺请点「流畅」或配置 HTTPS"
+                    : "公网 HTTP 无法 H.264（WebP）；建议 HTTPS。WS：ws://" +
+                      location.host +
+                      "/ws";
+        } else {
+            viewerTips.innerHTML = "点击画面进入控制（画面加载中也可点）";
+        }
+    }
+}
+
+/** 群控：从机暂停投屏，仅主屏维持采集 */
+function applySyncGroupCapturePolicy() {
+    const speed = pickCaptureSpeedForSession();
+    if (syncGroupDeviceIds.length < 2) {
+        sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+        return;
+    }
+    const followers = syncGroupDeviceIds.filter(
+        (id) => String(id) !== String(deviceId)
+    );
+    followers.forEach((id) => {
+        sendControlToDevice(id, { type: "pauseCapture" }, { skipFeedback: true });
+    });
+    sendControl({ type: "setCaptureSpeed", speed }, { skipFeedback: true });
+    updateGroupControlTitle();
+}
+
+function sendSwipeControl(swipePayload) {
+    const now = Date.now();
+    if (now - lastSwipeSentAt < SWIPE_THROTTLE_MS) {
+        if (viewerTips) viewerTips.innerHTML = "⏳ 滑动过快，请稍候";
+        return false;
+    }
+    lastSwipeSentAt = now;
+    const ok = sendControl(swipePayload, { skipFeedback: true });
+    if (!ok && viewerTips) {
+        viewerTips.innerHTML = "⚠️ 未连接服务器，滑动未发送";
+    }
+    return !!ok;
+}
+
+function beginSwipeCaptureSlowdown() {
+    if (swipeCapturingSlow) return;
+    swipeCapturingSlow = true;
+    // Base64 不再滑动降档，避免与 high 打架导致 4s 一帧
+}
+
+function endSwipeCaptureSlowdown() {
+    if (!swipeCapturingSlow) return;
+    swipeCapturingSlow = false;
+}
+
+/* ================= 坐标换算 ================= */
+
+function getPointFromOffset(offsetX, offsetY, rect) {
+
+    const { w, h } = getDeviceResolution();
+
+    const imgRatio = w / h;
+
+    const containerRatio =
+        rect.width / rect.height;
+
+    let realImgWidth = rect.width;
+    let realImgHeight = rect.height;
+
+    let imgLeftOuter = 0;
+    let imgTopOuter = 0;
+
+    if (containerRatio > imgRatio) {
+
+        realImgHeight = rect.height;
+
+        realImgWidth =
+            rect.height * imgRatio;
+
+        imgLeftOuter =
+            (rect.width - realImgWidth) / 2;
+
+    } else {
+
+        realImgWidth = rect.width;
+
+        realImgHeight =
+            rect.width / imgRatio;
+
+        imgTopOuter =
+            (rect.height - realImgHeight) / 2;
+    }
+
+    let clickX =
+        offsetX - imgLeftOuter;
+
+    let clickY =
+        offsetY - imgTopOuter;
+
+    if (clickX < 0) clickX = 0;
+    if (clickY < 0) clickY = 0;
+
+    if (clickX > realImgWidth)
+        clickX = realImgWidth;
+
+    if (clickY > realImgHeight)
+        clickY = realImgHeight;
+
+    const result = {
+        x: Math.round(
+            (clickX / realImgWidth) * w
+        ),
+        y: Math.round(
+            (clickY / realImgHeight) * h
+        )
+    };
+
+    // 调试日志 - 完整的中间过程
+    // console.log('[坐标换算详解]', {
+    //     '容器宽高': `${rect.width}x${rect.height}`,
+    //     '容器比例': containerRatio.toFixed(4),
+    //     '设备分辨率': `${w}x${h}`,
+    //     '设备比例': imgRatio.toFixed(4),
+    //     '实际图片宽高': `${realImgWidth.toFixed(0)}x${realImgHeight.toFixed(0)}`,
+    //     '水平居中偏移': imgLeftOuter.toFixed(1),
+    //     '竖直居中偏移': imgTopOuter.toFixed(1),
+    //     '输入offsetX': offsetX.toFixed(1),
+    //     '输入offsetY': offsetY.toFixed(1),
+    //     '计算clickX': clickX.toFixed(1),
+    //     '计算clickY': clickY.toFixed(1),
+    //     '最终设备坐标X': result.x,
+    //     '最终设备坐标Y': result.y,
+    //     '比例计算X': `${clickX.toFixed(1)}/${realImgWidth.toFixed(0)} * ${w} = ${result.x}`,
+    //     '比例计算Y': `${clickY.toFixed(1)}/${realImgHeight.toFixed(0)} * ${h} = ${result.y}`
+    // });
+    return result;
+}
+
+/** 滑动模式坐标：有画面时按 letterbox 内容区换算，无画面时按整块预览区兜底 */
+function getPointFromViewerFrame(e) {
+    if (!viewerFrame) return null;
+    if (usesBase64ImgDisplay()) {
+        updateBase64ContentRect();
+    }
+    const frameRect = viewerFrame.getBoundingClientRect();
+    if (frameRect.width < 8 || frameRect.height < 8) return null;
+    const localX = e.clientX - frameRect.left;
+    const localY = e.clientY - frameRect.top;
+    const { w, h } = getDeviceResolution();
+
+    if (lastFrameContentRect?.dw > 0 && lastFrameContentRect?.dh > 0) {
+        const { dx, dy, dw, dh } = lastFrameContentRect;
+        if (
+            localX < dx ||
+            localY < dy ||
+            localX > dx + dw ||
+            localY > dy + dh
+        ) {
+            return null;
+        }
+        return {
+            x: Math.round(((localX - dx) / dw) * w),
+            y: Math.round(((localY - dy) / dh) * h),
+        };
+    }
+
+    return {
+        x: Math.round((localX / frameRect.width) * w),
+        y: Math.round((localY / frameRect.height) * h),
+    };
+}
+
+function getPointFromEvent(e) {
+    if (currentControlMode === "swipe" && isExpanded) {
+        return getPointFromViewerFrame(e);
+    }
+
+    const currentRect = deviceImage.getBoundingClientRect();
+    const frameRect = viewerFrame.getBoundingClientRect();
+
+    const visibleLeft = Math.max(currentRect.left, frameRect.left);
+    const visibleTop = Math.max(currentRect.top, frameRect.top);
+    const visibleRight = Math.min(currentRect.right, frameRect.right);
+    const visibleBottom = Math.min(currentRect.bottom, frameRect.bottom);
+    const visibleWidth = Math.max(0, visibleRight - visibleLeft);
+    const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+
+    const useRect = visibleWidth > 0 && visibleHeight > 0
+        ? { left: visibleLeft, top: visibleTop, width: visibleWidth, height: visibleHeight }
+        : currentRect;
+
+    const offsetX = e.clientX - useRect.left;
+    const offsetY = e.clientY - useRect.top;
+
+    if (
+        lastFrameContentRect?.dw > 0 &&
+        lastFrameContentRect?.dh > 0 &&
+        !usesBase64ImgDisplay() &&
+        deviceCanvas
+    ) {
+        const { dx, dy, dw, dh, cw, ch } = lastFrameContentRect;
+        const scaleX = cw > 0 ? useRect.width / cw : 1;
+        const scaleY = ch > 0 ? useRect.height / ch : 1;
+        const localX = offsetX / scaleX;
+        const localY = offsetY / scaleY;
+        if (
+            localX < dx ||
+            localY < dy ||
+            localX > dx + dw ||
+            localY > dy + dh
+        ) {
+            return null;
+        }
+        const { w, h } = getDeviceResolution();
+        return {
+            x: Math.round(((localX - dx) / dw) * w),
+            y: Math.round(((localY - dy) / dh) * h),
+        };
+    }
+
+    if (
+        offsetX < 0 ||
+        offsetY < 0 ||
+        offsetX > useRect.width ||
+        offsetY > useRect.height
+    ) {
+        console.warn('[坐标换算] 点击点不在实际可见图像区', {
+            'e.clientX': e.clientX,
+            'e.clientY': e.clientY,
+            'currentRect': `${currentRect.left.toFixed(1)}x${currentRect.top.toFixed(1)} ${currentRect.width.toFixed(1)}x${currentRect.height.toFixed(1)}`,
+            'useRect': `${useRect.left.toFixed(1)}x${useRect.top.toFixed(1)} ${useRect.width.toFixed(1)}x${useRect.height.toFixed(1)}`,
+            'offsetX': offsetX.toFixed(1),
+            'offsetY': offsetY.toFixed(1)
+        });
+        return null;
+    }
+
+    const { w, h } = getDeviceResolution();
+    const result = {
+        x: Math.round((offsetX / useRect.width) * w),
+        y: Math.round((offsetY / useRect.height) * h)
+    };
+
+    // console.log('[坐标换算详解]', {
+    //     'frame宽高': `${frameRect.width.toFixed(0)}x${frameRect.height.toFixed(0)}`,
+    //     'currentRect': `${currentRect.width.toFixed(0)}x${currentRect.height.toFixed(0)}`,
+    //     'usedRect': `${useRect.width.toFixed(0)}x${useRect.height.toFixed(0)}`,
+    //     '截图原始像素': `${deviceImage.naturalWidth || 0}x${deviceImage.naturalHeight || 0}`,
+    //     '设备信息分辨率': `${w}x${h}`,
+    //     '输入offsetX': offsetX.toFixed(1),
+    //     '输入offsetY': offsetY.toFixed(1),
+    //     '最终设备坐标X': result.x,
+    //     '最终设备坐标Y': result.y
+    // });
+
+    return result;
+}
+
+/* ================= 模式UI ================= */
+
+function updateModeUI() {
+
+    viewerFrame.classList.remove(
+        "click-mode",
+        "swipe-mode",
+        "press-mode"
+    );
+
+    toggleClickMode.classList.remove(
+        "active"
+    );
+
+    toggleSwipeMode.classList.remove(
+        "active"
+    );
+
+    togglePressMode.classList.remove(
+        "active"
+    );
+
+    if (currentControlMode === "click") {
+
+        viewerFrame.classList.add(
+            "click-mode"
+        );
+
+        toggleClickMode.classList.add(
+            "active"
+        );
+
+        viewerTips.innerHTML =
+            "🎯 点击模式";
+
+    }
+
+    else if (
+        currentControlMode === "swipe"
+    ) {
+
+        viewerFrame.classList.add(
+            "swipe-mode"
+        );
+
+        toggleSwipeMode.classList.add(
+            "active"
+        );
+
+        viewerTips.innerHTML =
+            "🌀 滑动模式";
+    }
+
+    else if (
+        currentControlMode === "press"
+    ) {
+
+        viewerFrame.classList.add(
+            "press-mode"
+        );
+
+        togglePressMode.classList.add(
+            "active"
+        );
+
+        viewerTips.innerHTML =
+            "🔥 长按模式";
+    }
+
+    syncTouchLayers();
+}
+
+
+function bindModeToggle(btn, mode) {
+    if (!btn) return;
+    const activate = (e) => {
+        stopControlEvent(e);
+        currentControlMode = mode;
+        updateModeUI();
+    };
+    btn.addEventListener("pointerdown", stopControlEvent);
+    btn.addEventListener("click", activate);
+}
+
+bindModeToggle(toggleClickMode, "click");
+bindModeToggle(toggleSwipeMode, "swipe");
+bindModeToggle(togglePressMode, "press");
+/* ================= 禁止菜单 ================= */
+
+window.addEventListener(
+    "contextmenu",
+    e => e.preventDefault(),
+    { passive: false }
+);
+
+/* ================= 点击 ================= */
+
+viewerFrame.addEventListener("click", (e) => {
+
+    if (isControlChromeTarget(e.target)) {
+        return;
+    }
+
+    if (
+        isLongPressed ||
+        ignoreNextClick
+    ) {
+        return;
+    }
+
+    if (!isDeviceImageTarget(e.target) && e.target !== viewerFrame) {
+        return;
+    }
+
+    /* 未放大先进入控制模式 */
+
+    if (!isExpanded) {
+
+        isExpanded = true;
+
+        viewerFrame.classList.add(
+            "expanded"
+        );
+
+        syncTouchLayers();
+
+        requestAnimationFrame(refreshVisibleImageRect);
+
+        // 记录全屏时的详细信息
+        setTimeout(() => {
+            refreshVisibleImageRect();
+            const rect = lastVisibleImageRect || deviceImage.getBoundingClientRect();
+            const frameRect = viewerFrame.getBoundingClientRect();
+            const computedStyle = window.getComputedStyle(viewerFrame);
+            // console.log('[全屏模式信息]', {
+            //     'viewerFrame.position': computedStyle.position,
+            //     'viewerFrame.inset': `top:${computedStyle.top} right:${computedStyle.right} bottom:${computedStyle.bottom} left:${computedStyle.left}`,
+            //     'viewerFrame矩形': `x:${frameRect.x} y:${frameRect.y} w:${frameRect.width} h:${frameRect.height}`,
+            //     'deviceImage矩形': `x:${rect.x} y:${rect.y} w:${rect.width} h:${rect.height}`,
+            //     'left边距': rect.left,
+            //     'top边距': rect.top,
+            //     '窗口宽度': window.innerWidth,
+            //     '窗口高度': window.innerHeight
+            // });
+        }, 100);
+
+        updateModeUI();
+
+        if (!captureSessionPrewarmed) {
+            try {
+                bootstrapCaptureSession();
+            } catch (e) {
+                console.warn("进入控制预暖失败", e.message);
+            }
+        }
+        if (!captureElevated || Date.now() - lastElevateControlSentAt >= ELEVATE_CONTROL_COALESCE_MS) {
+            try {
+                primeControlCapture();
+            } catch (e) {
+                console.warn("进入全屏拉高帧失败", e.message);
+            }
+        }
+        if (viewerTips) {
+            viewerTips.innerHTML = lastFramePaintAt
+                ? "🔴 控制中（可点击/滑动）"
+                : "🔴 控制中（画面加载中，可先操作）";
+        }
+
+        return;
+    }
+
+    /* 不是点击/长按模式或不是有效图片区域直接退出 */
+
+    if (
+        currentControlMode !== "click"
+        &&
+        currentControlMode !== "press"
+    ) {
+        return;
+    }
+
+    if (!isDeviceImageTarget(e.target)) {
+        return;
+    }
+
+    /* 统一计算坐标 */
+
+    const p = getPointFromEvent(e);
+    if (!p) return;
+
+    /* ================= 长按模式 ================= */
+
+    if (currentControlMode === "press") {
+
+        sendControl({
+
+            type: "press",
+
+            x: p.x,
+
+            y: p.y,
+
+            duration: 1200
+        });
+
+        viewerTips.innerHTML =
+            `🔥 长按 (${p.x}, ${p.y})`;
+
+        return;
+    }
+
+    /* ================= 点击模式 ================= */
+
+    sendControl({
+
+        type: "click",
+
+        x: p.x,
+
+        y: p.y
+    });
+
+    viewerTips.innerHTML =
+        `🎯 点击 (${p.x}, ${p.y})`;
+
+    setTimeout(() => {
+
+        if (!isExpanded) return;
+
+        updateModeUI();
+
+    }, 700);
+
+});
+
+/* ================= 退出 ================= */
+
+btnCloseExpanded.addEventListener("pointerdown", stopControlEvent);
+btnCloseExpanded.addEventListener("click", (e) => {
+    stopControlEvent(e);
+    exitExpandedControl();
+});
+
+window.addEventListener("pagehide", () => {
+    releaseFrameBitmap();
+    teardownControlSession();
+});
+
+window.addEventListener("beforeunload", () => {
+    teardownControlSession();
+});
+
+document.addEventListener("visibilitychange", () => {
+    if (!controlSessionActive) return;
+    if (document.visibilityState === "hidden") {
+        clearControlIdleTimer();
+        if (!captureElevated) return;
+        if (visibilityLowTimer) clearTimeout(visibilityLowTimer);
+        visibilityLowTimer = setTimeout(() => {
+            visibilityLowTimer = null;
+            if (
+                document.visibilityState === "hidden" &&
+                controlSessionActive &&
+                captureElevated
+            ) {
+                StreamDiag.log("标签页隐藏超时 → low");
+                releaseControlCaptureToLow();
+            }
+        }, VISIBILITY_LOW_DELAY_MS);
+        return;
+    }
+    if (visibilityLowTimer) {
+        clearTimeout(visibilityLowTimer);
+        visibilityLowTimer = null;
+    }
+    if (!captureElevated && ws && ws.readyState === WebSocket.OPEN) {
+        elevateControlCapture("tab_visible");
+    } else if (captureElevated) {
+        scheduleControlIdleTimer();
+    }
+});
+
+/** 从往返缓存恢复时旧 WS 可能仍占「观众」位，需清理避免设备一直 high */
+window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+        teardownControlSession();
+    }
+});
+
+const backToList = document.getElementById("backToList");
+if (backToList) {
+    backToList.addEventListener("click", () => {
+        teardownControlSession();
+    });
+}
+
+// 初始化：建立 WebSocket 连接
+connectWebSocket();
+
+/* ================= Pointer 滑动控制 ================= */
+
+let pointerDown = false;
+
+let pointerStartX = 0;
+let pointerStartY = 0;
+
+function handlePointerDown(e) {
+    if (!isExpanded) return;
+    if (controlSessionActive) {
+        bumpControlActivity();
+    }
+
+    if (isControlChromeTarget(e.target)) {
+        return;
+    }
+
+    const swipeMode = currentControlMode === "swipe";
+    if (swipeMode) {
+        const onSwipeLayer =
+            swipeOverlay &&
+            (e.target === swipeOverlay || swipeOverlay.contains(e.target));
+        if (!isDeviceImageTarget(e.target) && !onSwipeLayer) {
+            return;
+        }
+    } else if (!isDeviceImageTarget(e.target)) {
+        return;
+    }
+
+    pointerDown = true;
+    pointerStartX = e.clientX;
+    pointerStartY = e.clientY;
+
+    const p = swipeMode ? getPointFromViewerFrame(e) : getPointFromEvent(e);
+    if (!p) {
+        pointerDown = false;
+        if (swipeMode && viewerTips) {
+            viewerTips.innerHTML = "⚠️ 无法换算坐标，请稍候画面加载";
+        }
+        return;
+    }
+
+    startOffsetPoint = p;
+
+    if (swipeMode) {
+        e.preventDefault();
+        if (swipeOverlay?.setPointerCapture) {
+            try {
+                swipeOverlay.setPointerCapture(e.pointerId);
+            } catch (err) {
+                console.warn("setPointerCapture failed", err.message);
+            }
+        }
+        isLongPressed = true;
+        swipeTrailStartClient = { x: e.clientX, y: e.clientY };
+        clearSwipeTrail();
+        beginSwipeCaptureSlowdown();
+        if (viewerTips) viewerTips.innerHTML = "🌀 开始滑动";
+        return;
+    }
+
+    if (currentControlMode === "press") {
+
+        touchTimer = setTimeout(() => {
+
+            isLongPressed = true;
+            ignoreNextClick = true;
+            ignoreNextClickFromPress = true;
+
+            sendControl({
+                type: "press",
+                x: p.x,
+                y: p.y,
+                duration: 1200
+            });
+
+            viewerTips.innerHTML =
+                `🔥 长按 (${p.x}, ${p.y})`;
+
+        }, 450);
+
+        return;
+    }
+
+    // 点击模式需要长按
+    touchTimer = setTimeout(() => {
+
+        isLongPressed = true;
+
+        viewerTips.innerHTML =
+            "🔥 长按滑动已激活";
+
+    }, 450);
+
+}
+
+viewerFrame.addEventListener("pointerdown", handlePointerDown);
+
+/* ================= pointermove ================= */
+
+function handlePointerMove(e) {
+
+    if (!pointerDown) return;
+
+    if (currentControlMode === "swipe") {
+        e.preventDefault();
+        if (swipeTrailStartClient) {
+            drawSwipeTrail(
+                swipeTrailStartClient.x,
+                swipeTrailStartClient.y,
+                e.clientX,
+                e.clientY
+            );
+        }
+    }
+
+    // 点击/长按模式下移动太大取消长按
+    if (
+        (currentControlMode === "click" || currentControlMode === "press")
+        &&
+        !isLongPressed
+    ) {
+
+        const moveX =
+            Math.abs(
+                e.clientX - pointerStartX
+            );
+
+        const moveY =
+            Math.abs(
+                e.clientY - pointerStartY
+            );
+
+        if (moveX > 20 || moveY > 20) {
+
+            clearTimeout(touchTimer);
+        }
+
+        return;
+    }
+
+    if (isLongPressed && currentControlMode === "swipe" && viewerTips) {
+        viewerTips.innerHTML = "🌀 正在滑动...";
+    }
+
+}
+
+viewerFrame.addEventListener("pointermove", handlePointerMove);
+
+/* ================= pointerup ================= */
+
+function handlePointerUp(e) {
+
+    if (isControlChromeTarget(e.target)) {
+        pointerDown = false;
+        clearTimeout(touchTimer);
+        isLongPressed = false;
+        return;
+    }
+
+    if (currentControlMode === "swipe" || ignoreNextClick) {
+        e.preventDefault();
+    }
+
+    pointerDown = false;
+
+    clearTimeout(touchTimer);
+
+    if (!isExpanded) return;
+
+    /* ================= 滑动模式 ================= */
+
+    if (currentControlMode === "swipe" && isLongPressed && startOffsetPoint) {
+
+        const endOffsetPoint = getPointFromViewerFrame(e);
+        if (swipeOverlay?.releasePointerCapture) {
+            try {
+                swipeOverlay.releasePointerCapture(e.pointerId);
+            } catch (err) {
+                /* 可能已由系统释放 */
+            }
+        }
+        clearSwipeTrail();
+        swipeTrailStartClient = null;
+        endSwipeCaptureSlowdown();
+
+        if (!endOffsetPoint) {
+            isLongPressed = false;
+            if (viewerTips) viewerTips.innerHTML = "⚠️ 滑动终点坐标无效";
+            return;
+        }
+
+        const sent = sendSwipeControl({
+            type: "swipe",
+            x1: startOffsetPoint.x,
+            y1: startOffsetPoint.y,
+            x2: endOffsetPoint.x,
+            y2: endOffsetPoint.y,
+            duration: 280
+        });
+
+        if (sent && viewerTips) {
+            viewerTips.innerHTML = "🌀 滑动已发送";
+        }
+
+        ignoreNextClick = true;
+        setTimeout(() => {
+            ignoreNextClick = false;
+        }, 700);
+    }
+
+    if (ignoreNextClickFromPress) {
+        setTimeout(() => {
+            ignoreNextClick = false;
+            ignoreNextClickFromPress = false;
+        }, 0);
+    }
+
+    /* 重置状态 */
+
+    isLongPressed = false;
+
+}
+
+viewerFrame.addEventListener("pointerup", handlePointerUp);
+viewerFrame.addEventListener("pointercancel", handlePointerUp);
+
+updateModeUI();
+
+/* ================= 侧边按钮 ================= */
+
+document.getElementById("btnBack").onclick =
+    () => sendControl({ type: "back" });
+
+document.getElementById("btnHome").onclick =
+    () => sendControl({ type: "home" });
+
+if (btnFetchUiNodes) {
+    btnFetchUiNodes.onclick = () => {
+        if (uiNodeModal) uiNodeModal.classList.remove("hidden");
+        if (typeof UiInspector !== "undefined" && UiInspector.showLoading) {
+            UiInspector.showLoading("正在抓取界面截图与节点树...");
+        } else {
+            if (uiNodeStatus) uiNodeStatus.textContent = "正在请求设备节点信息...";
+            if (uiNodeData) uiNodeData.textContent = "";
+        }
+        sendControl({ type: "fetchUiNodes" });
+    };
+}
+
+if (btnCloseUiNodeModal) {
+    btnCloseUiNodeModal.onclick = () => {
+        if (uiNodeModal) uiNodeModal.classList.add("hidden");
+    };
+}
+
+if (uiNodeModal) {
+    uiNodeModal.addEventListener("click", (e) => {
+        if (e.target.classList.contains("ui-node-modal-backdrop")) {
+            uiNodeModal.classList.add("hidden");
+        }
+    });
+}
+
+window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && uiNodeModal) {
+        uiNodeModal.classList.add("hidden");
+    }
+});
+
+function bindClick(id, handler) {
+    const el = document.getElementById(id);
+    if (el) el.onclick = handler;
+}
+
+bindClick("btnRecents", () => sendControl({ type: "recents" }));
+
+bindClick("btnInputText", () => {
+    const text = prompt("请输入文本");
+    if (!text) return;
+    sendControl({ type: "input", text });
+});
+/* ================= capture speed 控制按钮 ================= */
+const btnSetHighSpeed = document.getElementById("btnSetHighSpeed");
+const btnSetLowSpeed = document.getElementById("btnSetLowSpeed");
+
+if (btnSetHighSpeed) {
+    btnSetHighSpeed.onclick = () => {
+        sendControl({
+            type: "setCaptureSpeed",
+            speed: "high"
+        });
+        if (viewerTips) viewerTips.innerHTML = "🔴 已切换为实时监控（高帧率）";
+        updateCaptureStatusDisplay("high");
+    };
+}
+
+if (btnSetLowSpeed) {
+    btnSetLowSpeed.onclick = () => {
+        sendControl({
+            type: "setCaptureSpeed",
+            speed: "low"
+        });
+        if (viewerTips) viewerTips.innerHTML = "🟢 已切换为节省流量（低帧率）";
+        updateCaptureStatusDisplay("low");
+    };
+}
+
+const btnUploadFile = document.getElementById("btnUploadFile");
+const deviceFileInput = document.getElementById("deviceFileInput");
+const deviceUploadStatus = document.getElementById("deviceUploadStatus");
+if (btnUploadFile && deviceFileInput) {
+    btnUploadFile.addEventListener("click", () => {
+        deviceFileInput.value = "";
+        deviceFileInput.click();
+    });
+}
+if (deviceFileInput) {
+    deviceFileInput.addEventListener("change", async (event) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        await uploadFileToDevice(file);
+    });
+}
+
+async function uploadFileToDevice(file) {
+    if (!file) return;
+    if (!deviceUploadStatus) return;
+    deviceUploadStatus.textContent = "上传中…";
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("deviceId", deviceId);
+
+    try {
+        const resp = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "x-admin-token": token || "" },
+            body: formData,
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+            deviceUploadStatus.textContent = `上传失败：${data.message || "服务器错误"}`;
+            return;
+        }
+        deviceUploadStatus.textContent = `下发成功：${data.url}`;
+    } catch (err) {
+        deviceUploadStatus.textContent = `上传失败：${err.message}`;
+    }
+    setTimeout(() => {
+        if (deviceUploadStatus) deviceUploadStatus.textContent = "";
+    }, 5000);
+}
+
+/* ================= 网速检测 ================= */
+
+const btnSpeedTest = document.getElementById("btnSpeedTest");
+if (btnSpeedTest) {
+    btnSpeedTest.onclick = runSpeedTest;
+}
+
+async function runSpeedTest() {
+    if (btnSpeedTest) btnSpeedTest.disabled = true;
+    const results = { download: 0, upload: 0 };
+
+    try {
+        if (viewerTips) viewerTips.innerHTML = "⏳ 正在检测下载速度…";
+
+        const dlSize = 256 * 1024;
+        const dlUrl = `/api/speed-test-download?size=${dlSize}&t=${Date.now()}`;
+        const dlStart = performance.now();
+        const dlResp = await fetch(dlUrl, { cache: "no-store" });
+        if (dlResp.ok) {
+            const blob = await dlResp.blob();
+            const dlEnd = performance.now();
+            const dlMs = dlEnd - dlStart;
+            results.download = Math.round((blob.size * 8) / (dlMs / 1000) / 1024);
+        }
+
+        if (viewerTips) viewerTips.innerHTML = "⏳ 正在检测上传速度…";
+
+        const ulSize = 128 * 1024;
+        const ulData = new Uint8Array(ulSize);
+        for (let i = 0; i < ulData.length; i++) ulData[i] = Math.random() * 256 | 0;
+        const ulBlob = new Blob([ulData]);
+        const ulForm = new FormData();
+        ulForm.append("data", ulBlob, "speedtest.bin");
+
+        const ulStart = performance.now();
+        const ulResp = await fetch("/api/speed-test-upload", {
+            method: "POST",
+            headers: { "x-admin-token": token || "" },
+            body: ulForm,
+        });
+        const ulEnd = performance.now();
+        if (ulResp.ok) {
+            const ulMs = ulEnd - ulStart;
+            results.upload = Math.round((ulSize * 8) / (ulMs / 1000) / 1024);
+        }
+
+        const dlLabel = results.download > 1024
+            ? `${(results.download / 1024).toFixed(1)} Mbps`
+            : `${results.download} Kbps`;
+        const ulLabel = results.upload > 1024
+            ? `${(results.upload / 1024).toFixed(1)} Mbps`
+            : `${results.upload} Kbps`;
+
+        alert(`网速检测结果\n\n下载：${dlLabel}\n上传：${ulLabel}`);
+        if (viewerTips) viewerTips.innerHTML = `网速：下载 ${dlLabel} / 上传 ${ulLabel}`;
+    } catch (err) {
+        alert(`网速检测失败：${err.message}`);
+        if (viewerTips) viewerTips.innerHTML = "网速检测失败";
+    } finally {
+        if (btnSpeedTest) btnSpeedTest.disabled = false;
+    }
+}
+
+/* ================= 编码模式切换 ================= */
+
+function updateCodecModeButtons() {
+    if (btnCodecBase64) btnCodecBase64.classList.toggle("active", currentCodecMode === "base64");
+    if (btnCodecWebp) btnCodecWebp.classList.toggle("active", currentCodecMode === "webp");
+    if (btnCodecH264) btnCodecH264.classList.toggle("active", currentCodecMode === "h264");
+}
+
+function switchCodecMode(mode) {
+    if (mode === currentCodecMode) return;
+    currentCodecMode = mode;
+    updateCodecModeButtons();
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    switch (mode) {
+        case "base64":
+            sendControl({ type: "setCodecMode", mode: "base64" }, { skipFeedback: true });
+            sendControl({ type: "resumeCapture" }, { skipFeedback: true });
+            sendControl({ type: "setCaptureSpeed", speed: "high" }, { skipFeedback: true });
+            webpFallbackRequested = false;
+            codecPreferenceSynced = true;
+            updateCodecDisplayLayer();
+            captureProfileHint = "high";
+            updateCaptureStatusDisplay("high");
+            if (captureElevated) {
+                scheduleControlIdleTimer();
+            }
+            if (viewerTips) viewerTips.innerHTML = "已切换到 Base64 模式（JPEG·JSON）";
+            break;
+        case "webp":
+            updateCodecDisplayLayer();
+            webpFallbackRequested = true;
+            codecPreferenceSynced = true;
+            sendControl({ type: "setCodecMode", mode: "webp" }, { skipFeedback: true });
+            sendControl({ type: "preferWebp" }, { skipFeedback: true });
+            sendControl({ type: "resumeCapture" }, { skipFeedback: true });
+            sendControl(
+                { type: "setCaptureSpeed", speed: pickCaptureSpeedForSession() },
+                { skipFeedback: true }
+            );
+            sendControl({ type: "requestFrame" }, { skipFeedback: true });
+            captureElevated = true;
+            captureProfileHint = "high";
+            captureSessionPrewarmed = true;
+            scheduleControlIdleTimer();
+            updateCaptureStatusDisplay("high");
+            if (viewerTips) viewerTips.innerHTML = "已切换到 WebP 模式（二进制帧）";
+            break;
+        case "h264":
+            updateCodecDisplayLayer();
+            if (!canUseWebCodecsH264()) {
+                alert("当前环境不支持 H.264 解码（需要 HTTPS 或 localhost）");
+                currentCodecMode = "base64";
+                updateCodecModeButtons();
+                return;
+            }
+            sendControl({ type: "setCodecMode", mode: "h264" }, { skipFeedback: true });
+            sendControl({ type: "allowH264" }, { skipFeedback: true });
+            sendControl({ type: "setCaptureSpeed", speed: "high" }, { skipFeedback: true });
+            webpFallbackRequested = false;
+            codecPreferenceSynced = true;
+            if (viewerTips) viewerTips.innerHTML = "已切换到 H.264 模式（硬件解码）";
+            break;
+    }
+    StreamDiag.log("编码模式切换 →", mode);
+}
+
+if (btnCodecBase64) btnCodecBase64.addEventListener("click", () => switchCodecMode("base64"));
+if (btnCodecWebp) btnCodecWebp.addEventListener("click", () => switchCodecMode("webp"));
+if (btnCodecH264) btnCodecH264.addEventListener("click", () => switchCodecMode("h264"));

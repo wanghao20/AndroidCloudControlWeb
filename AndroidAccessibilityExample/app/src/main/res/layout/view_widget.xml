@@ -1,0 +1,320 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingTop="15dp">
+
+    <androidx.appcompat.widget.LinearLayoutCompat
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="活动名:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:id="@+id/widget_activity"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:ellipsize="end"
+                android:enabled="false"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="Clickable:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_clickable"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:enabled="false"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="Bonus:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_rect"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:enabled="false"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="Id:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_id"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:hint="该属性不存在"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="Describe:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_describe"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:hint="该属性不存在"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="Text:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_text"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:hint="该属性不存在"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="延迟点击(ms):"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_clickDelay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:ems="4"
+                android:inputType="number"
+                android:maxLength="4"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="不允许重复点击:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatCheckBox
+                android:id="@+id/widget_noRepeat"
+                android:layout_width="15dp"
+                android:layout_height="15dp"
+                android:layout_gravity="center_vertical"
+                android:background="@drawable/check_select"
+                android:button="@null"
+                android:gravity="center" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="仅进行模拟点击:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatCheckBox
+                android:id="@+id/widget_clickOnly"
+                android:layout_width="15dp"
+                android:layout_height="15dp"
+                android:layout_gravity="center_vertical"
+                android:background="@drawable/check_select"
+                android:button="@null"
+                android:gravity="center" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="备注:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_comment"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:hint="请输入该控件的备注内容"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <androidx.appcompat.widget.LinearLayoutCompat
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="5dp"
+                android:text="创建时间:"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/widget_createTime"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@null"
+                android:ellipsize="end"
+                android:enabled="false"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+        </androidx.appcompat.widget.LinearLayoutCompat>
+
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:id="@+id/widget_modify"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_alignParentStart="true"
+                android:layout_centerVertical="true"
+                android:layout_marginEnd="20dp"
+                android:layout_toStartOf="@+id/widget_share"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:textColor="@color/text_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:id="@+id/widget_share"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="20dp"
+                android:layout_toStartOf="@+id/widget_delete"
+                android:paddingHorizontal="5dp"
+                android:paddingVertical="10dp"
+                android:text="分享"
+                android:textColor="@drawable/text_click_color"
+                android:textSize="12sp" />
+
+            <androidx.appcompat.widget.AppCompatTextView
+                android:id="@+id/widget_delete"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentEnd="true"
+                android:paddingVertical="10dp"
+                android:paddingStart="5dp"
+                android:text="删除"
+                android:textColor="@drawable/text_click_color"
+                android:textSize="12sp" />
+        </RelativeLayout>
+    </androidx.appcompat.widget.LinearLayoutCompat>
+</RelativeLayout>

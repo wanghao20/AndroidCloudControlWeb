@@ -1,0 +1,8 @@
+.gradle/
+.gradle-tmp/
+.idea
+.project
+.settings
+.vscode
+build
+install.bat

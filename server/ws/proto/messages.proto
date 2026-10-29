@@ -1,0 +1,282 @@
+syntax = "proto3";
+
+package cloudcontrol;
+
+option java_package = "com.cloudcontrol.proto";
+option java_outer_classname = "CloudControlProto";
+
+// ===================== 控制命令 =====================
+
+/**
+ * 代表一条完整的设备控制指令
+ */
+message ControlCommand {
+  enum CommandType {
+    UNKNOWN = 0;
+    CLICK = 1;           // 点击
+    SWIPE = 2;           // 滑动
+    LONG_PRESS = 3;      // 长按
+    INPUT_TEXT = 4;      // 输入文本
+    KEY_EVENT = 5;       // 按键事件
+    SET_CAPTURE_SPEED = 6; // 设置采集速率
+    PAUSE_CAPTURE = 7;   // 暂停采集
+    RESUME_CAPTURE = 8;  // 恢复采集
+    FETCH_UI_NODES = 9;  // 获取 UI 节点
+  }
+  
+  CommandType type = 1;
+  
+  // 点击坐标
+  int32 x = 2;
+  int32 y = 3;
+  
+  // 滑动终点
+  int32 x2 = 4;
+  int32 y2 = 5;
+  
+  // 长按时长（毫秒）
+  int32 duration = 6;
+  
+  // 输入文本
+  string text = 7;
+  
+  // 按键代码
+  int32 key_code = 8;
+  
+  // 采集速率: "low" | "medium" | "high"
+  string capture_speed = 9;
+  
+  // 时间戳（毫秒）
+  int64 timestamp = 10;
+  
+  // 序列号（用于去重）
+  int32 sequence = 11;
+  
+  // UI 定位信息（AI 辅助）
+  UILocationHint ui_hint = 12;
+}
+
+/**
+ * UI 元素定位提示
+ */
+message UILocationHint {
+  string element_name = 1;    // 元素名称（如 "确定按钮"）
+  repeated int32 node_ids = 2; // 匹配的节点 ID 列表
+  float confidence = 3;        // AI 匹配置信度 (0.0-1.0)
+}
+
+// ===================== 设备画面 =====================
+
+/**
+ * 代表一帧设备屏幕画面
+ */
+message DeviceFrame {
+  enum ImageFormat {
+    JPEG = 0;
+    WEBP = 1;
+    H264 = 2;
+    H264_TS = 3;
+  }
+  
+  string device_id = 1;
+  bytes image_data = 2;        // 压缩后的图像数据
+  ImageFormat format = 3;      // 图像格式
+  int32 width = 4;             // 原始分辨率宽
+  int32 height = 5;            // 原始分辨率高
+  int64 timestamp = 6;         // 时间戳（毫秒）
+  int32 sequence = 7;          // 帧序号（检测丢帧）
+  bool is_keyframe = 8;        // H.264 是否为关键帧
+  int32 bytes = 9;             // 数据大小（字节）
+}
+
+// ===================== UI 节点信息 =====================
+
+/**
+ * 单个 UI 节点
+ */
+message UINode {
+  int32 node_id = 1;
+  string text = 2;
+  string resource_id = 3;
+  string class_name = 4;
+  
+  // 节点边界
+  int32 left = 5;
+  int32 top = 6;
+  int32 right = 7;
+  int32 bottom = 8;
+  
+  bool clickable = 9;
+  bool scrollable = 10;
+  bool focusable = 11;
+  
+  int32 parent_id = 12;
+  repeated int32 children_ids = 13;
+}
+
+/**
+ * 完整的 UI 树
+ */
+message UITree {
+  string device_id = 1;
+  int64 timestamp = 2;
+  string package_name = 3;
+  string activity_name = 4;
+  repeated UINode nodes = 5;
+}
+
+// ===================== 设备注册信息 =====================
+
+/**
+ * 设备注册请求
+ */
+message DeviceRegisterRequest {
+  string device_id = 1;
+  string brand = 2;
+  string model = 3;
+  string android_version = 4;
+  int32 width = 5;
+  int32 height = 6;
+  int32 dpi = 7;
+  string owner = 8;
+}
+
+/**
+ * 设备注册响应
+ */
+message DeviceRegisterResponse {
+  bool success = 1;
+  string message = 2;
+  int32 heartbeat_interval = 3;  // 心跳间隔（毫秒）
+  string default_capture_speed = 4;
+  repeated string supported_formats = 5;
+}
+
+// ===================== 心跳与连接管理 =====================
+
+/**
+ * 设备心跳
+ */
+message DeviceHeartbeat {
+  string device_id = 1;
+  int64 timestamp = 2;
+  int32 battery_level = 3;
+  bool is_screen_on = 4;
+  int32 free_memory_mb = 5;
+  int32 cpu_temp_c = 6;
+}
+
+/**
+ * 设备状态报告
+ */
+message DeviceStatus {
+  string device_id = 1;
+  enum Status {
+    OFFLINE = 0;
+    ONLINE = 1;
+    DISCONNECTING = 2;
+  }
+  Status status = 2;
+  int64 timestamp = 3;
+  string reason = 4;  // 断连原因
+}
+
+// ===================== AI 定位相关 =====================
+
+/**
+ * AI 元素查询请求
+ */
+message AILocateRequest {
+  string device_id = 1;
+  string query = 2;              // 查询文本，如 "确定按钮"
+  bytes ui_context = 3;          // UI 树的 Protobuf 编码（可选，通常由服务器提供）
+  float min_confidence = 4;      // 最小置信度阈值
+}
+
+/**
+ * AI 元素查询结果
+ */
+message AILocateResponse {
+  string device_id = 1;
+  string query = 2;
+  repeated ElementMatch matches = 3;
+  
+  message ElementMatch {
+    int32 node_id = 1;
+    string text = 2;
+    int32 left = 3;
+    int32 top = 4;
+    int32 right = 5;
+    int32 bottom = 6;
+    float confidence = 7;
+    string reason = 8;  // 匹配原因
+  }
+}
+
+// ===================== WebSocket 消息包 =====================
+
+/**
+ * WebSocket 消息的通用包装
+ */
+message WSMessage {
+  enum MessageType {
+    UNKNOWN = 0;
+    CONTROL = 1;           // 控制指令
+    FRAME = 2;             // 设备画面
+    UI_TREE = 3;           // UI 树
+    HEARTBEAT = 4;         // 心跳
+    STATUS = 5;            // 设备状态
+    REGISTER = 6;          // 设备注册
+    AI_LOCATE = 7;         // AI 定位
+    ACK = 8;               // 应答
+  }
+  
+  MessageType type = 1;
+  int32 sequence = 2;
+  int64 timestamp = 3;
+  
+  oneof payload {
+    ControlCommand control = 4;
+    DeviceFrame frame = 5;
+    UITree ui_tree = 6;
+    DeviceHeartbeat heartbeat = 7;
+    DeviceStatus status = 8;
+    DeviceRegisterRequest register = 9;
+    AILocateRequest ai_locate = 10;
+    AILocateResponse ai_locate_response = 11;
+  }
+}
+
+// ===================== 统计与监测 =====================
+
+/**
+ * 帧传输统计
+ */
+message FrameTransferStats {
+  string device_id = 1;
+  int32 total_frames = 2;
+  int32 dropped_frames = 3;
+  int64 total_bytes = 4;
+  float avg_latency_ms = 5;
+  int32 format_jpeg_count = 6;
+  int32 format_webp_count = 7;
+  int32 format_h264_count = 8;
+}
+
+/**
+ * 连接质量指标
+ */
+message ConnectionQuality {
+  string device_id = 1;
+  int64 timestamp = 2;
+  float bandwidth_mbps = 3;      // 实际带宽
+  int32 latency_ms = 4;          // 延迟
+  float packet_loss_rate = 5;    // 丢包率
+  enum Quality {
+    POOR = 0;
+    FAIR = 1;
+    GOOD = 2;
+    EXCELLENT = 3;
+  }
+  Quality quality = 6;
+}

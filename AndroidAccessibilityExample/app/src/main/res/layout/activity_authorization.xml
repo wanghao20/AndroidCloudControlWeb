@@ -1,0 +1,278 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ch_bg"
+    android:orientation="vertical">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="24dp"
+        android:layout_marginTop="48dp"
+        android:fontFamily="monospace"
+        android:text="@string/ch_permission_core"
+        android:textColor="@color/ch_cyan"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:letterSpacing="0.1" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="40dp">
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/ch_panel"
+                app:cardCornerRadius="2dp"
+                app:strokeColor="@color/ch_border"
+                app:strokeWidth="1dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <!-- 无障碍 -->
+                    <RelativeLayout
+                        android:id="@+id/accessibility_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/accessibility_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/accessibility_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_accessibility_service"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 设备管理器 -->
+                    <RelativeLayout
+                        android:id="@+id/device_admin_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/device_admin_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/device_admin_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_device_admin"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 电池优化 -->
+                    <RelativeLayout
+                        android:id="@+id/batteryIgnore_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/batteryIgnore_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/batteryIgnore_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_battery_optimization"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 通知保活 -->
+                    <RelativeLayout
+                        android:id="@+id/notification_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/notification_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/notification_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_notification_keepalive"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 悬浮窗保活 -->
+                    <RelativeLayout
+                        android:id="@+id/floating_window_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/floating_window_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/floating_window_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_floating_overlay"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 系统悬浮窗权限 -->
+                    <RelativeLayout
+                        android:id="@+id/system_alert_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/system_alert_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/system_alert_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_system_alert"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 群控投屏 -->
+                    <RelativeLayout
+                        android:id="@+id/group_control_on_off"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/group_control_on_off_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_error" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/group_control_on_off_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_media_projection"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:layout_marginStart="56dp" android:background="@color/ch_border" />
+
+                    <!-- 测试异常上报 -->
+                    <RelativeLayout
+                        android:id="@+id/test_exception_report"
+                        android:layout_width="match_parent"
+                        android:layout_height="64dp"
+                        android:background="?attr/selectableItemBackground"
+                        android:paddingHorizontal="16dp">
+                        <ImageView
+                            android:id="@+id/test_exception_report_img"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_centerVertical="true"
+                            android:src="@drawable/ic_ok"
+                            app:tint="@color/ch_success" />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_centerVertical="true"
+                            android:layout_marginStart="16dp"
+                            android:layout_toEndOf="@id/test_exception_report_img"
+                            android:fontFamily="monospace"
+                            android:text="@string/ch_exception_reporting"
+                            android:textColor="@color/ch_text"
+                            android:textSize="14sp" />
+                    </RelativeLayout>
+
+                </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:layout_marginHorizontal="8dp"
+                android:fontFamily="monospace"
+                android:lineSpacingMultiplier="1.4"
+                android:text="@string/ch_system_notice"
+                android:textColor="@color/ch_text_dim"
+                android:textSize="11sp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+</LinearLayout>

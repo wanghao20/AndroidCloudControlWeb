@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ch_bg">
+
+    <!-- HUD Background Grid (Simulated with a view) -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:alpha="0.05"
+        android:background="@drawable/ch_grid_tile" />
+
+    <!-- 内容区域 -->
+    <FrameLayout
+        android:id="@+id/main_fragment_container"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginBottom="130dp" />
+
+    <!-- Cyber HUD 风格悬浮导航底座 -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/nav_dock_card"
+        android:layout_width="match_parent"
+        android:layout_height="64dp"
+        android:layout_alignParentBottom="true"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="56dp"
+        app:cardBackgroundColor="@color/ch_panel"
+        app:cardCornerRadius="4dp"
+        app:cardElevation="12dp"
+        app:strokeColor="@color/ch_border"
+        app:strokeWidth="1dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:baselineAligned="false"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <!-- 首页 -->
+            <RelativeLayout
+                android:id="@+id/nav_home"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless">
+
+                <ImageView
+                    android:id="@+id/iv_nav_home"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="10dp"
+                    android:src="@drawable/add_data"
+                    app:tint="@color/tg_accent" />
+
+                <TextView
+                    android:id="@+id/tv_nav_home"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_below="@id/iv_nav_home"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="2dp"
+                    android:text="首页"
+                    android:textColor="@color/tg_accent"
+                    android:textSize="11sp" />
+            </RelativeLayout>
+
+            <!-- 设置 -->
+            <RelativeLayout
+                android:id="@+id/nav_settings"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless">
+
+                <ImageView
+                    android:id="@+id/iv_nav_settings"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="10dp"
+                    android:src="@drawable/forward"
+                    app:tint="@color/tg_text_secondary" />
+
+                <TextView
+                    android:id="@+id/tv_nav_settings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_below="@id/iv_nav_settings"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="2dp"
+                    android:text="设置"
+                    android:textColor="@color/tg_text_secondary"
+                    android:textSize="11sp" />
+            </RelativeLayout>
+
+            <!-- 关于 -->
+            <RelativeLayout
+                android:id="@+id/nav_about"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless">
+
+                <ImageView
+                    android:id="@+id/iv_nav_about"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="10dp"
+                    android:src="@drawable/p"
+                    app:tint="@color/tg_text_secondary" />
+
+                <TextView
+                    android:id="@+id/tv_nav_about"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_below="@id/iv_nav_about"
+                    android:layout_centerHorizontal="true"
+                    android:layout_marginTop="2dp"
+                    android:text="关于"
+                    android:textColor="@color/tg_text_secondary"
+                    android:textSize="11sp" />
+            </RelativeLayout>
+
+        </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
+</RelativeLayout>

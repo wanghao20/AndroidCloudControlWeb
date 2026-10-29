@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>DEVICE CONTROL · 设备控制</title>
+    <link rel="stylesheet" href="cyber-hud.css" />
+    <link rel="stylesheet" href="global.css" />
+    <link rel="stylesheet" href="device.css" />
+
+</head>
+
+<body>
+    <div class="cyber-hud">
+        <div class="ch-bg" aria-hidden="true">
+            <div class="ch-bg-grid"></div>
+            <div class="ch-bg-glow ch-bg-glow-1"></div>
+            <div class="ch-bg-glow ch-bg-glow-2"></div>
+            <div class="ch-scanline"></div>
+        </div>
+
+        <div class="ch-container ch-container-full device-shell">
+            <header class="ch-header device-topbar">
+                <div class="ch-logo">CLOUD <span class="ch-logo-accent">CTRL</span></div>
+                <div class="device-topbar-right">
+                    <div class="ch-badge">
+                        <span class="ch-dot"></span>
+                        <span>LINKED</span>
+                    </div>
+                    <a href="./" class="hud-btn back-link" id="backToList">[ 返回列表 ]</a>
+                </div>
+            </header>
+
+            <main class="device-page">
+
+                <section class="device-info-card ch-panel ch-panel-compact">
+                    <span class="ch-corner ch-corner-tl"></span>
+                    <span class="ch-corner ch-corner-tr"></span>
+                    <span class="ch-corner ch-corner-bl"></span>
+                    <span class="ch-corner ch-corner-br"></span>
+                    <div class="ch-section-label">DEVICE UNIT</div>
+                    <h2 id="deviceTitle">设备控制：加载中...</h2>
+                    <div id="masterDeviceRow" class="master-device-row hidden">
+                        <label for="masterDeviceSelect">群控主屏</label>
+                        <select id="masterDeviceSelect" class="master-device-select ch-select"></select>
+                    </div>
+                    <div class="device-meta" id="deviceMeta"></div>
+                    <div class="viewer-quality-bar" id="viewerQualityBar">
+                        <span class="viewer-quality-label ch-section-label">STREAM QUALITY</span>
+                        <button type="button" id="btnQualitySmooth" class="quality-btn hud-btn active">[ 流畅 ]</button>
+                        <button type="button" id="btnQualityHigh" class="quality-btn hud-btn">[ 清晰 ]</button>
+                    </div>
+                </section>
+
+                <section class="device-viewer">
+
+                    <div class="viewer-frame ch-viewer-frame" id="viewerFrame">
+
+                        <button id="btnCloseExpanded" class="close-expanded-btn hud-btn hud-btn--danger">[ 退出控制 ]</button>
+
+                        <div class="mode-toggle-bar">
+                            <button id="toggleClickMode" class="mode-btn active">[ 点击 ]</button>
+                            <button id="toggleSwipeMode" class="mode-btn">[ 滑动 ]</button>
+                            <button id="togglePressMode" class="mode-btn">[ 长按 ]</button>
+                        </div>
+
+                        <div class="device-frame-stack" id="deviceFrameStack">
+                            <img id="deviceImageA" class="device-frame-img device-frame-img--visible" alt="" draggable="false" />
+                            <img id="deviceImageB" class="device-frame-img device-frame-img--hidden" alt="" draggable="false" />
+                            <canvas id="deviceCanvas" class="device-frame-canvas" aria-label="实时画面同步中"></canvas>
+                        </div>
+
+                        <div id="swipeOverlay" class="swipe-touch-overlay">
+                            <canvas id="swipeTrailCanvas" class="swipe-trail-canvas"></canvas>
+                        </div>
+
+                        <div class="viewer-tips" id="viewerTips">
+                            点击画面放大控制
+                        </div>
+                        <div id="recordingIndicator" class="recording-indicator hidden" aria-live="polite">
+                            <span class="recording-indicator-dot" aria-hidden="true"></span>
+                            正在录屏
+                        </div>
+                        <div id="captureSpeedStatus" class="capture-speed-status">帧率：未知</div>
+                    </div>
+
+                    <div class="control-panel-wrap ch-panel ch-panel-side">
+                        <span class="ch-corner ch-corner-tl"></span>
+                        <span class="ch-corner ch-corner-tr"></span>
+                        <span class="ch-corner ch-corner-bl"></span>
+                        <span class="ch-corner ch-corner-br"></span>
+                        <div class="ch-section-label">CONTROL</div>
+                        <div class="control-panel">
+                            <button id="btnUploadFile" type="button" class="hud-btn hud-btn--danger control-panel-btn">[ 上传文件到该设备 ]</button>
+                            <button id="btnBack" type="button" class="hud-btn control-panel-btn">[ 返回 ]</button>
+                            <button id="btnHome" type="button" class="hud-btn control-panel-btn">[ HOME ]</button>
+                            <button id="btnRecents" type="button" class="hud-btn control-panel-btn">[ 最近任务 ]</button>
+                            <button id="btnDeviceClipboard" type="button" class="hud-btn control-panel-btn">[ 设备剪切板 ]</button>
+                            <button id="btnInputText" type="button" class="hud-btn control-panel-btn">[ 输入文本 ]</button>
+                            <button id="btnFetchUiNodes" type="button" class="hud-btn control-panel-btn">[ 获取节点 ]</button>
+                            <button id="btnFetchScreenshot" type="button" class="hud-btn control-panel-btn">[ 获取截图 ]</button>
+                            <button id="btnScreenRecord" type="button" class="hud-btn control-panel-btn" aria-pressed="false">[ 开始录屏 ]</button>
+                            <div id="screenRecordStatus" class="screen-record-status ch-text-dim"></div>
+                            <button id="btnSpeedTest" type="button" class="hud-btn control-panel-btn">[ 检测网速 ]</button>
+                            <div class="codec-mode-bar">
+                                <span class="codec-mode-label ch-section-label">CODEC</span>
+                                <button id="btnCodecBase64" type="button" class="codec-btn hud-btn">Base64</button>
+                                <button id="btnCodecWebp" type="button" class="codec-btn hud-btn">WebP</button>
+                                <button id="btnCodecH264" type="button" class="codec-btn hud-btn">H.264</button>
+                            </div>
+                        </div>
+                        <div id="deviceUploadStatus" class="upload-status ch-text-dim"></div>
+                    </div>
+                    <input type="file" id="deviceFileInput" accept="*/*" style="display:none" />
+
+                </section>
+            </main>
+        </div>
+
+        <div id="uiNodeModal" class="ui-node-modal hidden">
+            <div class="ui-node-modal-backdrop"></div>
+            <div class="ui-node-modal-content ch-panel">
+                <span class="ch-corner ch-corner-tl"></span>
+                <span class="ch-corner ch-corner-tr"></span>
+                <span class="ch-corner ch-corner-bl"></span>
+                <span class="ch-corner ch-corner-br"></span>
+                <div class="ui-node-modal-header ch-card-head">
+                    <div class="ch-title">// UI NODES</div>
+                    <button id="btnCloseUiNodeModal" class="modal-close-btn ch-btn ch-btn-primary">✕</button>
+                </div>
+                <div class="ui-node-modal-body ch-card-body">
+                    <div id="uiNodeStatus" class="node-status ch-text-dim">请求节点信息后，将在此处显示</div>
+                    <div id="uiInspectorPanel" class="ui-inspector-panel" style="display:none">
+                        <div class="ui-inspector-left">
+                            <div id="uiInspectorShotWrap" class="ui-inspector-shot-wrap">
+                                <img id="uiInspectorImage" class="ui-inspector-image" alt="界面截图" />
+                                <canvas id="uiInspectorOverlay" class="ui-inspector-overlay"></canvas>
+                                <div id="uiInspectorCoords" class="ui-inspector-coords">x: —  y: —</div>
+                            </div>
+                        </div>
+                        <div class="ui-inspector-right">
+                            <div class="ui-inspector-search-wrap ch-card">
+                                <input type="search" id="uiInspectorSearch" class="ui-inspector-search ch-input" placeholder="搜索 text / id / className / bounds…" autocomplete="off" spellcheck="false" />
+                                <div id="uiInspectorSearchHint" class="ui-inspector-search-hint"></div>
+                            </div>
+                            <div class="ui-inspector-tree-wrap ch-card">
+                                <div class="ui-inspector-section-head">
+                                    <span class="ui-inspector-section-title ch-section-label">NODE TREE</span>
+                                    <div class="ui-tree-toolbar">
+                                        <button type="button" id="uiTreeExpandAll" class="ui-tree-tool-btn ch-btn ch-btn-primary">全部展开</button>
+                                        <button type="button" id="uiTreeCollapseAll" class="ui-tree-tool-btn ch-btn ch-btn-primary">全部折叠</button>
+                                    </div>
+                                </div>
+                                <div id="uiInspectorTree" class="ui-inspector-tree hud-scrollbar"></div>
+                            </div>
+                            <div class="ui-inspector-props-wrap ch-card">
+                                <div class="ui-inspector-section-title ch-section-label">PROPERTIES</div>
+                                <table class="ui-inspector-props-table ch-table">
+                                    <thead><tr><th>属性</th><th>值</th></tr></thead>
+                                    <tbody id="uiInspectorPropsBody" class="hud-scrollbar"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    <pre id="uiNodeData" class="node-data ch-json"></pre>
+                </div>
+            </div>
+        </div>
+
+        <div id="screenshotModal" class="ui-node-modal screenshot-modal hidden">
+            <div class="ui-node-modal-backdrop"></div>
+            <div class="ui-node-modal-content ch-panel screenshot-modal-content">
+                <span class="ch-corner ch-corner-tl"></span>
+                <span class="ch-corner ch-corner-tr"></span>
+                <span class="ch-corner ch-corner-bl"></span>
+                <span class="ch-corner ch-corner-br"></span>
+                <div class="ui-node-modal-header ch-card-head">
+                    <div class="ch-title">// SCREENSHOT</div>
+                    <button id="btnCloseScreenshotModal" type="button" class="modal-close-btn ch-btn ch-btn-primary">✕</button>
+                </div>
+                <div class="screenshot-modal-body ch-card-body">
+                    <div id="screenshotStatus" class="node-status ch-text-dim">点击「获取截图」后在此编辑</div>
+                    <div id="screenshotEditorPanel" class="screenshot-editor-panel" style="display:none">
+                        <div class="screenshot-editor-left">
+                            <div id="screenshotViewport" class="screenshot-viewport">
+                                <div id="screenshotTransformLayer" class="screenshot-transform-layer">
+                                    <img id="screenshotImage" class="screenshot-image" alt="设备原图" draggable="false" />
+                                </div>
+                                <canvas id="screenshotOverlay" class="screenshot-overlay"></canvas>
+                            </div>
+                            <div id="screenshotMeta" class="screenshot-meta"></div>
+                        </div>
+                        <div class="screenshot-editor-right ch-card">
+                            <div class="ch-section-label">TOOLS</div>
+                            <button type="button" id="btnScreenshotModeCrop" class="hud-btn screenshot-tool-btn active">[ 截图模式 ]</button>
+                            <button type="button" id="btnScreenshotModePan" class="hud-btn screenshot-tool-btn">[ 移动模式 ]</button>
+                            <button type="button" id="btnScreenshotSave" class="hud-btn screenshot-tool-btn screenshot-save-btn" disabled>[ 保存到本地 ]</button>
+                            <div id="screenshotHint" class="screenshot-hint ch-text-dim">
+                                截图模式：左键拖拽框选区域，按原图像素保存。移动模式：滚轮缩放，拖拽平移。
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="clipboardModal" class="ui-node-modal clipboard-modal hidden">
+            <div class="ui-node-modal-backdrop"></div>
+            <div class="ui-node-modal-content ch-panel clipboard-modal-content">
+                <span class="ch-corner ch-corner-tl"></span>
+                <span class="ch-corner ch-corner-tr"></span>
+                <span class="ch-corner ch-corner-bl"></span>
+                <span class="ch-corner ch-corner-br"></span>
+                <div class="ui-node-modal-header ch-card-head">
+                    <div class="ch-title">// DEVICE CLIPBOARD</div>
+                    <button id="btnCloseClipboardModal" type="button" class="modal-close-btn ch-btn ch-btn-primary">✕</button>
+                </div>
+                <div class="clipboard-modal-body ch-card-body">
+                    <div id="clipboardStatus" class="node-status ch-text-dim">正在读取设备剪切板…</div>
+                    <textarea id="clipboardText" class="clipboard-textarea ch-input" placeholder="设备剪切板内容将显示在这里"></textarea>
+                    <div class="clipboard-modal-actions">
+                        <button id="btnRefreshClipboard" type="button" class="hud-btn ch-btn ch-btn-primary">刷新</button>
+                        <button id="btnSetClipboard" type="button" class="hud-btn ch-btn ch-btn-primary">设置</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="ws-debug.js"></script>
+    <script src="codec-client.js"></script>
+    <script src="ui-inspector.js"></script>
+    <script src="screenshot-editor.js"></script>
+    <script src="clipboard-panel.js"></script>
+    <script type="module" src="control.js"></script>
+</body>
+
+</html>
