@@ -25,9 +25,8 @@ class MyUtils private constructor(private val mContext: Context) {
          */
         const val USE_FIXED_SERVER_CONFIG = true
 
-//        /** 服务器 IP 或域名 (例如: 42.193.14.39 或 whnetcn.top) */
-        const val FIXED_SERVER_HOST = "42.193.14.39"
-//        const val FIXED_SERVER_HOST = "192.168.3.100"
+//        /** 服务器 IP 或域名  */
+       const val FIXED_SERVER_HOST = "192.168.3.100"
 
         /** 服务器端口 (Node.js 常用 3000, HTTPS 常用 443) */
         const val FIXED_SERVER_PORT = 3000
